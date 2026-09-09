@@ -40,7 +40,7 @@ make install PREFIX=/some/other/path
 wt clone <git-url>     Clone a repo into a bare-repo + worktrees layout
 wt <branch>            Create (or reuse) a worktree for <branch>
 wt remove <branch>     Remove a worktree and its local branch
-wt update              Fetch all remotes, prune stale worktrees, and list them
+wt update              Fetch all remotes, fast-forward primary, and list worktrees
 wt help                Show this help
 ```
 
@@ -58,7 +58,7 @@ cd ../bugfix-123
 
 wt remove feature/login # removes the worktree and local branch (with a prompt for the remote)
 
-wt update               # fetch --all --prune, prune stale worktrees, list branches and worktrees
+wt update               # fetch --all --prune, fast-forward primary, list branches and worktrees
 ```
 
 ### Layout created by `wt clone`
@@ -76,6 +76,12 @@ repo/
 You can run `wt <branch>` and `wt remove <branch>` from anywhere inside
 the repo (the bare root or any worktree) — the script always resolves
 the actual repo root.
+
+`wt update` also fast-forwards `primary` to its upstream — but only when
+`primary` has no local changes and can be fast-forwarded cleanly. If it
+has uncommitted changes or has diverged (e.g. you committed directly on
+`primary`), `wt update` warns and leaves it untouched instead of risking
+your work; update it yourself with `git pull` in that case.
 
 ## Why this approach?
 

@@ -14,7 +14,7 @@ Usage:
   wt clone <git-url>     Clone a repo into a bare-repo + worktrees layout
   wt <branch>            Create (or reuse) a worktree for <branch>
   wt remove <branch>     Remove a worktree and its local branch
-  wt update              Fetch all remotes and list worktrees
+  wt update              Fetch all remotes, fast-forward primary, and list worktrees
   wt help                Show this help
 
 Layout created by 'wt clone':
@@ -30,6 +30,9 @@ Notes:
   - If a worktree directory is deleted manually (e.g. 'rm -rf') instead of
     via 'wt remove', 'wt <branch>' and 'wt update' clean up the stale
     registration automatically.
+  - 'wt update' fast-forwards 'primary' to its upstream, but only if
+    primary has no local changes and can be fast-forwarded cleanly;
+    otherwise it warns and leaves primary untouched.
 EOF
 }
 
@@ -215,6 +218,29 @@ if [ "$1" = "update" ]; then
     echo
     echo "Pruning stale worktree registrations..."
     git worktree prune
+
+    PRIMARY_PATH="$REPO_ROOT/primary"
+
+    if [ -d "$PRIMARY_PATH" ]; then
+        echo
+        echo "Updating primary worktree..."
+
+        if [ -n "$(git -C "$PRIMARY_PATH" status --porcelain)" ]; then
+            echo "Warning: primary has local changes, skipping update." >&2
+            echo "  Update it yourself: cd '$PRIMARY_PATH' && git pull" >&2
+        elif ! PRIMARY_BRANCH="$(git -C "$PRIMARY_PATH" symbolic-ref --short HEAD 2>/dev/null)"; then
+            echo "Warning: primary is in detached HEAD, skipping update." >&2
+            echo "  Update it yourself: cd '$PRIMARY_PATH'" >&2
+        elif ! git -C "$PRIMARY_PATH" rev-parse --verify -q '@{u}' >/dev/null; then
+            echo "Warning: branch '$PRIMARY_BRANCH' in primary has no upstream, skipping update." >&2
+            echo "  Update it yourself: cd '$PRIMARY_PATH'" >&2
+        elif git -C "$PRIMARY_PATH" merge --ff-only '@{u}' >/dev/null 2>&1; then
+            echo "primary fast-forwarded to $(git -C "$PRIMARY_PATH" rev-parse --abbrev-ref '@{u}')."
+        else
+            echo "Warning: primary has diverged from its upstream, skipping update." >&2
+            echo "  Resolve it yourself: cd '$PRIMARY_PATH'" >&2
+        fi
+    fi
 
     echo
     echo "Remote branches:"
