@@ -1,0 +1,391 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
+
+print_usage() {
+    cat <<'EOF'
+wt - git worktree helper
+
+Usage:
+  wt clone <git-url>     Clone a repo into a bare-repo + worktrees layout
+  wt <branch>            Create (or reuse) a worktree for <branch>
+  wt remove <branch>     Remove a worktree and its local branch
+  wt update              Fetch all remotes and list worktrees
+  wt help                Show this help
+
+Layout created by 'wt clone':
+  <repo>/.bare           Bare git repository (do not touch)
+  <repo>/.git            Points to .bare
+  <repo>/primary         Permanent worktree checked out on the default branch
+  <repo>/<branch>        Worktree created on demand by 'wt <branch>'
+
+Notes:
+  - 'primary' is treated as permanent and 'wt remove' refuses to touch it.
+  - Run 'wt <branch>' / 'wt remove <branch>' from anywhere inside the repo
+    (the bare root or any worktree).
+  - If a worktree directory is deleted manually (e.g. 'rm -rf') instead of
+    via 'wt remove', 'wt <branch>' and 'wt update' clean up the stale
+    registration automatically.
+EOF
+}
+
+REPO_ROOT=""
+
+require_repo() {
+    if ! git rev-parse --git-common-dir >/dev/null 2>&1; then
+        echo "Error: not inside a git repository." >&2
+        echo "Run 'wt clone <git-url>' first, or 'cd' into an existing repo." >&2
+        exit 1
+    fi
+
+    # Root of the bare-repo + worktrees layout (parent of .bare), regardless
+    # of whether we're invoked from the bare root or from inside a worktree.
+    REPO_ROOT="$(cd "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")" && pwd)"
+}
+
+validate_branch_name() {
+    local branch="$1"
+
+    if [ -z "$branch" ]; then
+        echo "Error: branch name cannot be empty." >&2
+        exit 1
+    fi
+
+    if [[ "$branch" == -* ]]; then
+        echo "Error: invalid branch name '$branch'." >&2
+        exit 1
+    fi
+}
+
+worktree_exists_for_branch() {
+    local branch="$1"
+    git worktree list --porcelain | grep -q "^branch refs/heads/$branch\$"
+}
+
+
+# ------------------------------------------------------------
+# wt help / -h / --help / (no args)
+# ------------------------------------------------------------
+
+case "${1-}" in
+    -h|--help|help)
+        print_usage
+        exit 0
+        ;;
+esac
+
+if [ "$#" -eq 0 ]; then
+    print_usage
+    exit 1
+fi
+
+
+# ------------------------------------------------------------
+# wt clone <git-url>
+# ------------------------------------------------------------
+
+if [ "$1" = "clone" ]; then
+
+    if [ "$#" -ne 2 ]; then
+        echo "Usage: wt clone <git-url>" >&2
+        exit 1
+    fi
+
+    REPO_URL="$2"
+
+    # Remove trailing slash if present
+    REPO_URL="${REPO_URL%/}"
+
+    if [ -z "$REPO_URL" ]; then
+        echo "Error: git-url cannot be empty." >&2
+        exit 1
+    fi
+
+    # Extract repository name
+    REPO_NAME="$(basename "$REPO_URL")"
+    REPO_NAME="${REPO_NAME%.git}"
+
+    if [ -z "$REPO_NAME" ]; then
+        echo "Error: could not determine repository name from '$REPO_URL'." >&2
+        exit 1
+    fi
+
+    TARGET_DIR="$(pwd)/$REPO_NAME"
+
+    echo "Repository: $REPO_NAME"
+
+    # Do not overwrite an existing directory
+    if [ -e "$TARGET_DIR" ]; then
+        echo "Error: directory already exists:" >&2
+        echo "  $TARGET_DIR" >&2
+        exit 1
+    fi
+
+    # Clean up a partial clone if anything below fails
+    cleanup_partial_clone() {
+        echo
+        echo "Clone failed, cleaning up:"
+        echo "  $TARGET_DIR"
+        rm -rf "$TARGET_DIR"
+    }
+    trap cleanup_partial_clone ERR
+
+    # Create repository directory
+    mkdir "$TARGET_DIR"
+    cd "$TARGET_DIR"
+
+    echo
+    echo "Initializing bare repository..."
+
+    # Init empty + fetch manually (instead of 'git clone --bare') so remote
+    # branches land as remote-tracking refs (refs/remotes/origin/*), not as
+    # mirrored local branches (refs/heads/*) with no upstream configured.
+    git init -q --bare .bare
+
+    # Tell Git that this directory is the worktree root
+    printf 'gitdir: ./.bare\n' > .git
+
+    git remote add origin "$REPO_URL"
+    git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+
+    echo
+    echo "Fetching all remote branches..."
+
+    git fetch --all --prune
+
+    # Detect the default branch
+    git remote set-head origin -a
+
+    DEFAULT_BRANCH="$(git symbolic-ref --short refs/remotes/origin/HEAD)"
+    DEFAULT_BRANCH="${DEFAULT_BRANCH#origin/}"
+
+    echo
+    echo "Default branch: $DEFAULT_BRANCH"
+
+    # Create the primary worktree from the existing remote branch
+    echo
+    echo "Creating primary worktree..."
+
+    git worktree add --track -b "$DEFAULT_BRANCH" primary "origin/$DEFAULT_BRANCH"
+
+    trap - ERR
+
+    echo
+    echo "Done."
+    echo
+    echo "Repository:"
+    echo "  $TARGET_DIR"
+    echo
+    echo "Primary worktree:"
+    echo "  $TARGET_DIR/primary"
+    echo
+    echo "Default branch:"
+    echo "  $DEFAULT_BRANCH"
+
+    exit 0
+fi
+
+
+# ------------------------------------------------------------
+# wt update
+# ------------------------------------------------------------
+
+if [ "$1" = "update" ]; then
+
+    if [ "$#" -ne 1 ]; then
+        echo "Usage: wt update" >&2
+        exit 1
+    fi
+
+    require_repo
+
+    echo "Fetching remote branches..."
+    echo
+
+    git fetch --all --prune
+
+    echo
+    echo "Updating remote HEAD..."
+    git remote set-head origin -a
+
+    echo
+    echo "Pruning stale worktree registrations..."
+    git worktree prune
+
+    echo
+    echo "Remote branches:"
+    git --no-pager branch -r
+
+    echo
+    echo "Worktrees:"
+    git worktree list
+
+    echo
+    echo "Update complete."
+    exit 0
+fi
+
+
+# ------------------------------------------------------------
+# wt remove <branch>
+# ------------------------------------------------------------
+
+if [ "$1" = "remove" ]; then
+
+    if [ "$#" -ne 2 ]; then
+        echo "Usage: wt remove <branch>" >&2
+        exit 1
+    fi
+
+    require_repo
+
+    BRANCH="$2"
+    validate_branch_name "$BRANCH"
+
+    if [ "$BRANCH" = "primary" ]; then
+        echo "Error: 'primary' is the permanent worktree and cannot be removed." >&2
+        exit 1
+    fi
+
+    if ! worktree_exists_for_branch "$BRANCH"; then
+        echo "Error: no worktree found for branch '$BRANCH'." >&2
+        echo
+        git worktree list
+        exit 1
+    fi
+
+    WORKTREE_PATH="$REPO_ROOT/$BRANCH"
+
+    echo "Removing worktree: $WORKTREE_PATH"
+    if ! git worktree remove "$WORKTREE_PATH"; then
+        echo
+        echo "Hint: if the worktree has uncommitted changes, retry with:" >&2
+        echo "  git worktree remove --force '$WORKTREE_PATH'" >&2
+        exit 1
+    fi
+
+    # Clean up now-empty parent directories left behind by nested branch
+    # names (e.g. feature/foo -> feature/ becomes empty once foo/ is gone)
+    PARENT_DIR="$(dirname "$WORKTREE_PATH")"
+    while [ "$PARENT_DIR" != "$REPO_ROOT" ] && [ -d "$PARENT_DIR" ] && [ -z "$(ls -A "$PARENT_DIR")" ]; do
+        rmdir "$PARENT_DIR"
+        PARENT_DIR="$(dirname "$PARENT_DIR")"
+    done
+
+    echo "Deleting local branch: $BRANCH"
+    if ! git branch -d "$BRANCH"; then
+        echo
+        echo "Hint: if the branch isn't fully merged, force-delete it with:" >&2
+        echo "  git branch -D '$BRANCH'" >&2
+        exit 1
+    fi
+
+    echo
+    read -r -p "Delete origin/$BRANCH as well? [y/N] " -n 1 REPLY
+    echo
+    if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+        echo "Deleting origin/$BRANCH..."
+        git push origin --delete "$BRANCH"
+    fi
+
+    echo
+    echo "Remove complete."
+    exit 0
+fi
+
+
+# ------------------------------------------------------------
+# wt <branch>
+# ------------------------------------------------------------
+
+if [ "$#" -ne 1 ]; then
+    echo "Error: unknown command '$1'." >&2
+    echo
+    print_usage
+    exit 1
+fi
+
+require_repo
+
+BRANCH="$1"
+validate_branch_name "$BRANCH"
+
+# Update remote references before looking for the branch
+git fetch --all --prune
+
+# Clear out stale worktree registrations left behind by manually removing
+# a worktree directory (e.g. 'rm -rf') instead of using 'wt remove'
+git worktree prune
+
+# Check if branch is already checked out in another worktree
+if worktree_exists_for_branch "$BRANCH"; then
+    echo "Error: branch '$BRANCH' is already checked out in another worktree." >&2
+    echo
+    git worktree list
+    exit 1
+fi
+
+# Worktree path (always relative to the repo root, not the cwd)
+WORKTREE_PATH="$REPO_ROOT/$BRANCH"
+
+
+# ------------------------------------------------------------
+# Existing local branch
+# ------------------------------------------------------------
+
+if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+
+    echo "Local branch found: $BRANCH"
+    echo "Creating worktree: $WORKTREE_PATH"
+
+    git worktree add "$WORKTREE_PATH" "$BRANCH"
+
+
+# ------------------------------------------------------------
+# Existing remote branch
+# ------------------------------------------------------------
+
+elif git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+
+    echo "Remote branch found: origin/$BRANCH"
+    echo "Creating tracking branch: $BRANCH"
+    echo "Creating worktree: $WORKTREE_PATH"
+
+    git worktree add \
+        --track \
+        -b "$BRANCH" \
+        "$WORKTREE_PATH" \
+        "origin/$BRANCH"
+
+
+# ------------------------------------------------------------
+# New branch
+# ------------------------------------------------------------
+
+else
+
+    DEFAULT_BRANCH="$(git symbolic-ref --short refs/remotes/origin/HEAD)"
+    DEFAULT_BRANCH="${DEFAULT_BRANCH#origin/}"
+
+    echo "Branch '$BRANCH' does not exist."
+    echo "Creating new branch from: $DEFAULT_BRANCH"
+    echo "Creating worktree: $WORKTREE_PATH"
+
+    git worktree add \
+        -b "$BRANCH" \
+        "$WORKTREE_PATH" \
+        "origin/$DEFAULT_BRANCH"
+
+fi
+
+
+echo
+echo "Worktree ready:"
+echo "  $WORKTREE_PATH"
+echo
+echo "To enter it:"
+echo "  cd '$WORKTREE_PATH'"
