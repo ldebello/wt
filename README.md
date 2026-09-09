@@ -115,6 +115,44 @@ The only cost is understanding the layout (`.bare`, `primary`, and one
 folder per branch) — `wt` exists precisely so you don't have to manage
 that layout by hand with raw `git worktree` commands.
 
+## Using with Claude Code
+
+If you keep multiple repos side by side in one parent folder (some using
+the `wt` layout, some not) and want Claude Code to manage worktrees for
+you automatically, drop a `CLAUDE.md` in that parent folder. Claude Code
+reads `CLAUDE.md` files while walking up from the current directory, so
+one placed there is picked up no matter which repo or worktree you open
+a session in.
+
+```markdown
+# Repos in this folder using the `wt` layout
+
+Some repos here use the `wt` bare-repo + worktrees layout, others are
+plain clones. `wt` is installed and on PATH.
+
+A repo uses the `wt` layout if `<repo>/.bare` exists. In that case:
+- `<repo>/primary` is the permanent worktree on the default branch.
+- `<repo>/<branch>` is a worktree created with `wt <branch>`.
+- Never edit anything inside `<repo>/.bare` directly.
+
+When asked to work on repo(s) X, Y, Z (optionally with a branch name),
+for each one:
+1. Check whether `<repo>/.bare` exists.
+2. If it does, run `wt <branch>` with cwd anywhere inside `<repo>`
+   (the repo root works, no need to `cd` into `primary` first), then do
+   the actual work inside `<repo>/<branch>` — not in `primary`.
+3. If it doesn't, work directly in `<repo>` with a normal `git checkout`.
+4. If no branch name was given, pick one descriptive name and reuse it
+   across every affected repo, unless told otherwise.
+
+`wt remove <branch>` deletes a worktree and its local branch — don't run
+it on your own initiative, only when explicitly asked.
+```
+
+Adjust the repo list / paths to your own setup. This lets you say
+"we need to touch repo A and repo B for this feature" and have Claude
+create or reuse the right worktree in each one before it starts editing.
+
 ## Credits
 
 The bare-repo + worktrees layout this script automates is based on the
