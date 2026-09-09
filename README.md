@@ -40,7 +40,7 @@ make install PREFIX=/some/other/path
 wt clone <git-url>     Clone a repo into a bare-repo + worktrees layout
 wt <branch>            Create (or reuse) a worktree for <branch>
 wt remove <branch>     Remove a worktree and its local branch
-wt update               Fetch all remotes, prune stale worktrees, and list them
+wt update              Fetch all remotes, prune stale worktrees, and list them
 wt help                Show this help
 ```
 
@@ -58,7 +58,7 @@ cd ../bugfix-123
 
 wt remove feature/login # removes the worktree and local branch (with a prompt for the remote)
 
-wt update                # fetch --all --prune, prune stale worktrees, list branches and worktrees
+wt update               # fetch --all --prune, prune stale worktrees, list branches and worktrees
 ```
 
 ### Layout created by `wt clone`
