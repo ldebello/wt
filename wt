@@ -401,7 +401,11 @@ else
     echo "Creating new branch from: $DEFAULT_BRANCH"
     echo "Creating worktree: $WORKTREE_PATH"
 
+    # --no-track: without it, git auto-configures the new branch's upstream
+    # to origin/$DEFAULT_BRANCH (since the start-point is a remote-tracking
+    # branch), which later confuses a plain 'git push' on this branch.
     git worktree add \
+        --no-track \
         -b "$BRANCH" \
         "$WORKTREE_PATH" \
         "origin/$DEFAULT_BRANCH"
