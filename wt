@@ -14,6 +14,7 @@ Usage:
   wt clone <git-url>     Clone a repo into a bare-repo + worktrees layout
   wt <branch>            Create (or reuse) a worktree for <branch>
   wt remove <branch>     Remove a worktree and its local branch
+  wt cleanup             Remove every worktree except primary, then update
   wt update              Fetch all remotes, fast-forward primary, and list worktrees
   wt help                Show this help
 
@@ -33,6 +34,10 @@ Notes:
   - 'wt update' fast-forwards 'primary' to its upstream, but only if
     primary has no local changes and can be fast-forwarded cleanly;
     otherwise it warns and leaves primary untouched.
+  - 'wt cleanup' skips (and reports) any worktree with uncommitted
+    changes; a removed worktree whose branch isn't fully merged keeps
+    its local branch around. It never touches remote branches -- use
+    'wt remove <branch>' for that.
 EOF
 }
 
@@ -67,6 +72,56 @@ validate_branch_name() {
 worktree_exists_for_branch() {
     local branch="$1"
     git worktree list --porcelain | grep -q "^branch refs/heads/$branch\$"
+}
+
+# Shared by 'wt update' and 'wt cleanup'. Assumes require_repo already ran.
+run_update() {
+    echo "Fetching remote branches..."
+    echo
+
+    git fetch --all --prune
+
+    echo
+    echo "Updating remote HEAD..."
+    git remote set-head origin -a
+
+    echo
+    echo "Pruning stale worktree registrations..."
+    git worktree prune
+
+    PRIMARY_PATH="$REPO_ROOT/primary"
+
+    if [ -d "$PRIMARY_PATH" ]; then
+        echo
+        echo "Updating primary worktree..."
+
+        if [ -n "$(git -C "$PRIMARY_PATH" status --porcelain)" ]; then
+            echo "Warning: primary has local changes, skipping update." >&2
+            echo "  Update it yourself: cd '$PRIMARY_PATH' && git pull" >&2
+        elif ! PRIMARY_BRANCH="$(git -C "$PRIMARY_PATH" symbolic-ref --short HEAD 2>/dev/null)"; then
+            echo "Warning: primary is in detached HEAD, skipping update." >&2
+            echo "  Update it yourself: cd '$PRIMARY_PATH'" >&2
+        elif ! git -C "$PRIMARY_PATH" rev-parse --verify -q '@{u}' >/dev/null; then
+            echo "Warning: branch '$PRIMARY_BRANCH' in primary has no upstream, skipping update." >&2
+            echo "  Update it yourself: cd '$PRIMARY_PATH'" >&2
+        elif git -C "$PRIMARY_PATH" merge --ff-only '@{u}' >/dev/null 2>&1; then
+            echo "primary fast-forwarded to $(git -C "$PRIMARY_PATH" rev-parse --abbrev-ref '@{u}')."
+        else
+            echo "Warning: primary has diverged from its upstream, skipping update." >&2
+            echo "  Resolve it yourself: cd '$PRIMARY_PATH'" >&2
+        fi
+    fi
+
+    echo
+    echo "Remote branches:"
+    git --no-pager branch -r
+
+    echo
+    echo "Worktrees:"
+    git worktree list
+
+    echo
+    echo "Update complete."
 }
 
 
@@ -205,53 +260,7 @@ if [ "$1" = "update" ]; then
     fi
 
     require_repo
-
-    echo "Fetching remote branches..."
-    echo
-
-    git fetch --all --prune
-
-    echo
-    echo "Updating remote HEAD..."
-    git remote set-head origin -a
-
-    echo
-    echo "Pruning stale worktree registrations..."
-    git worktree prune
-
-    PRIMARY_PATH="$REPO_ROOT/primary"
-
-    if [ -d "$PRIMARY_PATH" ]; then
-        echo
-        echo "Updating primary worktree..."
-
-        if [ -n "$(git -C "$PRIMARY_PATH" status --porcelain)" ]; then
-            echo "Warning: primary has local changes, skipping update." >&2
-            echo "  Update it yourself: cd '$PRIMARY_PATH' && git pull" >&2
-        elif ! PRIMARY_BRANCH="$(git -C "$PRIMARY_PATH" symbolic-ref --short HEAD 2>/dev/null)"; then
-            echo "Warning: primary is in detached HEAD, skipping update." >&2
-            echo "  Update it yourself: cd '$PRIMARY_PATH'" >&2
-        elif ! git -C "$PRIMARY_PATH" rev-parse --verify -q '@{u}' >/dev/null; then
-            echo "Warning: branch '$PRIMARY_BRANCH' in primary has no upstream, skipping update." >&2
-            echo "  Update it yourself: cd '$PRIMARY_PATH'" >&2
-        elif git -C "$PRIMARY_PATH" merge --ff-only '@{u}' >/dev/null 2>&1; then
-            echo "primary fast-forwarded to $(git -C "$PRIMARY_PATH" rev-parse --abbrev-ref '@{u}')."
-        else
-            echo "Warning: primary has diverged from its upstream, skipping update." >&2
-            echo "  Resolve it yourself: cd '$PRIMARY_PATH'" >&2
-        fi
-    fi
-
-    echo
-    echo "Remote branches:"
-    git --no-pager branch -r
-
-    echo
-    echo "Worktrees:"
-    git worktree list
-
-    echo
-    echo "Update complete."
+    run_update
     exit 0
 fi
 
@@ -320,6 +329,68 @@ if [ "$1" = "remove" ]; then
 
     echo
     echo "Remove complete."
+    exit 0
+fi
+
+
+# ------------------------------------------------------------
+# wt cleanup
+# ------------------------------------------------------------
+
+if [ "$1" = "cleanup" ]; then
+
+    if [ "$#" -ne 1 ]; then
+        echo "Usage: wt cleanup" >&2
+        exit 1
+    fi
+
+    require_repo
+
+    echo "Removing worktrees other than 'primary'..."
+    echo
+
+    REMOVED=0
+    SKIPPED=0
+
+    while IFS=$'\t' read -r WORKTREE_PATH BRANCH; do
+        if [ "$WORKTREE_PATH" = "$REPO_ROOT/primary" ]; then
+            continue
+        fi
+
+        if ! git worktree remove "$WORKTREE_PATH" >/dev/null 2>&1; then
+            echo "Skipped '$BRANCH': has uncommitted changes (or is locked)."
+            SKIPPED=$((SKIPPED + 1))
+            continue
+        fi
+
+        # Clean up now-empty parent directories left behind by nested branch
+        # names (e.g. feature/foo -> feature/ becomes empty once foo/ is gone)
+        PARENT_DIR="$(dirname "$WORKTREE_PATH")"
+        while [ "$PARENT_DIR" != "$REPO_ROOT" ] && [ -d "$PARENT_DIR" ] && [ -z "$(ls -A "$PARENT_DIR")" ]; do
+            rmdir "$PARENT_DIR"
+            PARENT_DIR="$(dirname "$PARENT_DIR")"
+        done
+
+        # Remote branches are never touched by 'wt cleanup' -- use
+        # 'wt remove <branch>' if you also want to delete the remote branch.
+        if git branch -d "$BRANCH" >/dev/null 2>&1; then
+            echo "Removed '$BRANCH' (worktree + local branch)."
+        else
+            echo "Removed worktree for '$BRANCH', kept branch (not fully merged)."
+        fi
+        REMOVED=$((REMOVED + 1))
+
+    done < <(git worktree list --porcelain | awk '
+        /^worktree / { path = $2 }
+        /^branch refs\/heads\// { print path "\t" substr($2, 12) }
+    ')
+
+    echo
+    echo "Cleanup: removed $REMOVED worktree(s), skipped $SKIPPED."
+    echo
+
+    run_update
+
     exit 0
 fi
 

@@ -40,6 +40,7 @@ make install PREFIX=/some/other/path
 wt clone <git-url>     Clone a repo into a bare-repo + worktrees layout
 wt <branch>            Create (or reuse) a worktree for <branch>
 wt remove <branch>     Remove a worktree and its local branch
+wt cleanup             Remove every worktree except primary, then update
 wt update              Fetch all remotes, fast-forward primary, and list worktrees
 wt help                Show this help
 ```
@@ -57,6 +58,8 @@ wt bugfix-123           # another branch, another worktree, side by side
 cd ../bugfix-123
 
 wt remove feature/login # removes the worktree and local branch (with a prompt for the remote)
+
+wt cleanup               # removes every safe-to-remove worktree except primary, then updates
 
 wt update               # fetch --all --prune, fast-forward primary, list branches and worktrees
 ```
@@ -82,6 +85,22 @@ the actual repo root.
 has uncommitted changes or has diverged (e.g. you committed directly on
 `primary`), `wt update` warns and leaves it untouched instead of risking
 your work; update it yourself with `git pull` in that case.
+
+`wt cleanup` sweeps every worktree except `primary` and removes whatever
+it safely can, then runs the same update as `wt update`. For each
+worktree it tries `git worktree remove` (no `--force`) and `git branch
+-d` (no `-D`):
+
+- A worktree with uncommitted changes (or that's locked) is skipped
+  entirely and reported — nothing is touched.
+- A worktree whose branch is fully merged is removed along with its
+  local branch.
+- A worktree whose branch isn't fully merged still has its worktree
+  removed, but the local branch is kept around (retrievable later with
+  `wt <branch>`).
+
+`wt cleanup` never touches remote branches — use `wt remove <branch>`
+for that, one branch at a time.
 
 ## Why this approach?
 
