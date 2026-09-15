@@ -13,6 +13,9 @@ wt - git worktree helper
 Usage:
   wt clone <git-url>     Clone a repo into a bare-repo + worktrees layout
   wt <branch>            Create (or reuse) a worktree for <branch>
+  wt <branch> --from <base-branch>
+                         Create <branch> as a new branch starting from
+                         <base-branch> instead of the default branch
   wt remove <branch>     Remove a worktree and its local branch
   wt cleanup             Remove every worktree except primary, then update
   wt update              Fetch all remotes, fast-forward primary, and list worktrees
@@ -38,6 +41,9 @@ Notes:
     changes; a removed worktree whose branch isn't fully merged keeps
     its local branch around. It never touches remote branches -- use
     'wt remove <branch>' for that.
+  - '--from <base-branch>' only applies when <branch> doesn't exist yet
+    (locally or on origin); if it already exists, --from is ignored with
+    a warning and the existing branch/worktree is reused as usual.
 EOF
 }
 
@@ -396,20 +402,36 @@ fi
 
 
 # ------------------------------------------------------------
-# wt <branch>
+# wt <branch> [--from <base-branch>]
 # ------------------------------------------------------------
 
-if [ "$#" -ne 1 ]; then
-    echo "Error: unknown command '$1'." >&2
-    echo
-    print_usage
-    exit 1
+BRANCH="$1"
+shift
+
+FROM_BRANCH=""
+
+if [ "$#" -gt 0 ]; then
+    if [ "$1" != "--from" ]; then
+        echo "Error: unknown option '$1'." >&2
+        echo
+        print_usage
+        exit 1
+    fi
+
+    if [ "$#" -ne 2 ]; then
+        echo "Usage: wt <branch> --from <base-branch>" >&2
+        exit 1
+    fi
+
+    FROM_BRANCH="$2"
 fi
 
 require_repo
 
-BRANCH="$1"
 validate_branch_name "$BRANCH"
+if [ -n "$FROM_BRANCH" ]; then
+    validate_branch_name "$FROM_BRANCH"
+fi
 
 # Update remote references before looking for the branch
 git fetch --all --prune
@@ -436,6 +458,10 @@ WORKTREE_PATH="$REPO_ROOT/$BRANCH"
 
 if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
 
+    if [ -n "$FROM_BRANCH" ]; then
+        echo "Warning: branch '$BRANCH' already exists locally, ignoring --from '$FROM_BRANCH'." >&2
+    fi
+
     echo "Local branch found: $BRANCH"
     echo "Creating worktree: $WORKTREE_PATH"
 
@@ -447,6 +473,10 @@ if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
 # ------------------------------------------------------------
 
 elif git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+
+    if [ -n "$FROM_BRANCH" ]; then
+        echo "Warning: branch '$BRANCH' already exists on origin, ignoring --from '$FROM_BRANCH'." >&2
+    fi
 
     echo "Remote branch found: origin/$BRANCH"
     echo "Creating tracking branch: $BRANCH"
@@ -465,21 +495,41 @@ elif git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
 
 else
 
-    DEFAULT_BRANCH="$(git symbolic-ref --short refs/remotes/origin/HEAD)"
-    DEFAULT_BRANCH="${DEFAULT_BRANCH#origin/}"
+    if [ -n "$FROM_BRANCH" ]; then
 
-    echo "Branch '$BRANCH' does not exist."
-    echo "Creating new branch from: $DEFAULT_BRANCH"
-    echo "Creating worktree: $WORKTREE_PATH"
+        if git show-ref --verify --quiet "refs/heads/$FROM_BRANCH"; then
+            START_POINT="$FROM_BRANCH"
+        elif git show-ref --verify --quiet "refs/remotes/origin/$FROM_BRANCH"; then
+            START_POINT="origin/$FROM_BRANCH"
+        else
+            echo "Error: base branch '$FROM_BRANCH' not found locally or on origin." >&2
+            exit 1
+        fi
+
+        echo "Branch '$BRANCH' does not exist."
+        echo "Creating new branch from: $START_POINT"
+        echo "Creating worktree: $WORKTREE_PATH"
+
+    else
+
+        DEFAULT_BRANCH="$(git symbolic-ref --short refs/remotes/origin/HEAD)"
+        DEFAULT_BRANCH="${DEFAULT_BRANCH#origin/}"
+        START_POINT="origin/$DEFAULT_BRANCH"
+
+        echo "Branch '$BRANCH' does not exist."
+        echo "Creating new branch from: $DEFAULT_BRANCH"
+        echo "Creating worktree: $WORKTREE_PATH"
+
+    fi
 
     # --no-track: without it, git auto-configures the new branch's upstream
-    # to origin/$DEFAULT_BRANCH (since the start-point is a remote-tracking
-    # branch), which later confuses a plain 'git push' on this branch.
+    # to the start-point branch whenever it's a remote-tracking branch,
+    # which later confuses a plain 'git push' on this branch.
     git worktree add \
         --no-track \
         -b "$BRANCH" \
         "$WORKTREE_PATH" \
-        "origin/$DEFAULT_BRANCH"
+        "$START_POINT"
 
 fi
 

@@ -39,6 +39,9 @@ make install PREFIX=/some/other/path
 ```
 wt clone <git-url>     Clone a repo into a bare-repo + worktrees layout
 wt <branch>            Create (or reuse) a worktree for <branch>
+wt <branch> --from <base-branch>
+                        Create <branch> as a new branch starting from
+                        <base-branch> instead of the default branch
 wt remove <branch>     Remove a worktree and its local branch
 wt cleanup             Remove every worktree except primary, then update
 wt update              Fetch all remotes, fast-forward primary, and list worktrees
@@ -56,6 +59,9 @@ cd ../feature/login
 
 wt bugfix-123           # another branch, another worktree, side by side
 cd ../bugfix-123
+
+wt hotfix --from release-2.4  # new branch off release-2.4 instead of the default branch
+cd ../hotfix
 
 wt remove feature/login # removes the worktree and local branch (with a prompt for the remote)
 
@@ -79,6 +85,22 @@ repo/
 You can run `wt <branch>` and `wt remove <branch>` from anywhere inside
 the repo (the bare root or any worktree) — the script always resolves
 the actual repo root.
+
+By default, a brand-new branch is created off the repo's default branch
+(`origin/<default>`). Pass `--from <base-branch>` to branch off something
+else instead — a release branch, another feature branch, anything that
+exists locally or on `origin`:
+
+```bash
+wt hotfix --from release-2.4     # release-2.4 exists on origin
+wt follow-up --from feature/foo  # feature/foo is only local so far
+```
+
+`--from` only matters when `<branch>` doesn't exist yet. If `<branch>`
+already has a worktree-able local or remote branch, `wt` reuses it as
+usual and prints a warning that `--from` was ignored. If the base branch
+itself doesn't exist anywhere, `wt` fails with an error instead of
+creating the worktree.
 
 `wt update` also fast-forwards `primary` to its upstream — but only when
 `primary` has no local changes and can be fast-forwarded cleanly. If it
