@@ -45,6 +45,11 @@ wt <branch> --from <base-branch>
 wt remove <branch>     Remove a worktree and its local branch
 wt cleanup             Remove every worktree except primary, then update
 wt update              Fetch all remotes, fast-forward primary, and list worktrees
+wt workspace <name> --repos <r1,r2,...> [--base <dir>]
+                        Create (or update) a multi-repo workspace
+wt workspace remove <name> [--base <dir>]
+                        Remove every worktree in a workspace, then the
+                        workspace directory itself
 wt help                Show this help
 ```
 
@@ -122,7 +127,86 @@ worktree it tries `git worktree remove` (no `--force`) and `git branch
   `wt <branch>`).
 
 `wt cleanup` never touches remote branches — use `wt remove <branch>`
-for that, one branch at a time.
+for that, one branch at a time. It also never touches worktrees that
+belong to a workspace (see below) — those are only removed with
+`wt workspace remove <name>`.
+
+## Workspaces
+
+A ticket that spans several repos normally means creating a same-named
+worktree in each repo separately — which makes it awkward to open all
+of them in one editor window (for a combined GitLens view, say) or to
+build a single cross-repo view of the code.
+
+`wt workspace` groups them instead: one worktree per repo, all nested
+under a single folder, all on the same branch — `<name>` is both the
+workspace folder name and the branch name, since in practice they're
+the same thing (the ticket).
+
+```bash
+wt workspace DOM-1784 --repos api,worker,frontend
+```
+
+This creates:
+
+```
+~/repos/workspaces/DOM-1784/
+├── .wt-workspace        # metadata read back by 'wt workspace remove'
+├── api/                 # worktree on branch DOM-1784
+├── worker/              # worktree on branch DOM-1784
+└── frontend/            # worktree on branch DOM-1784
+```
+
+- `--repos` is a comma-separated list of repos that already use the
+  `wt` bare-repo + worktrees layout under `--base` (i.e. each one has
+  `<base>/<repo>/.bare`).
+- `--base` defaults to `~/repos` if omitted.
+- `<name>` becomes the branch name in every repo, exactly like the
+  `<branch>` argument to plain `wt <branch>` (existing local branch,
+  existing remote branch, or a new branch off the default branch, in
+  that order). Since it's also a path segment, unlike a plain `<branch>`
+  it can't contain `/`.
+- Every repo is validated up front. If one is missing or invalid,
+  nothing is created; if a worktree can't be created partway through
+  (e.g. the branch is already checked out elsewhere in one repo), any
+  worktree already created earlier in that same run is rolled back.
+- Re-running the same command later (e.g. after adding a repo to
+  `--repos`) reuses worktrees that already exist and only creates the
+  ones that are missing.
+
+Open `~/repos/workspaces/DOM-1784` as a single folder in your editor to
+see and diff all three repos together.
+
+`wt workspace remove <name> [--base <dir>]` removes every worktree in
+the workspace (and its local branch, same rules as `wt remove`), then
+the workspace directory itself. It asks once whether to also delete the
+matching branch on `origin` for every repo, instead of prompting repo
+by repo.
+
+### Optional: cross-repo code graph with CodeGraph
+
+If [CodeGraph](https://github.com/colbymchenry/codegraph) is installed
+and `WT_CODEGRAPH=true` is set in your shell, `wt workspace` also indexes
+the whole workspace as one project: `codegraph init` the first time,
+`codegraph index --force` on later re-runs (e.g. after a repo was
+added). This gives you a knowledge graph that spans all the repos in
+the workspace, not just one at a time.
+
+If `WT_CODEGRAPH` is unset or not `"true"`, `wt workspace` never invokes
+`codegraph` at all.
+
+To set it up once:
+
+```bash
+# follow the install instructions at https://github.com/colbymchenry/codegraph
+codegraph telemetry off
+
+# in your ~/.zshrc / ~/.bashrc
+export WT_CODEGRAPH=true
+```
+
+After that, every `wt workspace` call keeps the graph up to date on its
+own — no extra step needed.
 
 ## Why this approach?
 

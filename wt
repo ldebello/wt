@@ -19,6 +19,14 @@ Usage:
   wt remove <branch>     Remove a worktree and its local branch
   wt cleanup             Remove every worktree except primary, then update
   wt update              Fetch all remotes, fast-forward primary, and list worktrees
+  wt workspace <name> --repos <r1,r2,...> [--base <dir>]
+                         Create (or update) a multi-repo workspace: one
+                         worktree per repo, all rooted under
+                         <base>/workspaces/<name>/<repo>, all on branch
+                         <name>
+  wt workspace remove <name> [--base <dir>]
+                         Remove every worktree in a workspace, then the
+                         workspace directory itself
   wt help                Show this help
 
 Layout created by 'wt clone':
@@ -26,6 +34,14 @@ Layout created by 'wt clone':
   <repo>/.git            Points to .bare
   <repo>/primary         Permanent worktree checked out on the default branch
   <repo>/<branch>        Worktree created on demand by 'wt <branch>'
+
+Layout created by 'wt workspace':
+  <base>/workspaces/<name>/<repo>
+                         One worktree per repo listed in --repos, all
+                         checked out on branch <name>.
+  <base>/workspaces/<name>/.wt-workspace
+                         Metadata (name, base, repos) read back by
+                         'wt workspace remove'. Don't edit by hand.
 
 Notes:
   - 'primary' is treated as permanent and 'wt remove' refuses to touch it.
@@ -44,10 +60,22 @@ Notes:
   - '--from <base-branch>' only applies when <branch> doesn't exist yet
     (locally or on origin); if it already exists, --from is ignored with
     a warning and the existing branch/worktree is reused as usual.
+  - A workspace's <name> is also the branch name checked out in every
+    one of its repos, so unlike a plain <branch>, it can't contain '/'.
+  - 'wt workspace' re-run on an existing workspace reuses worktrees that
+    already exist and only creates the ones that are missing (e.g. after
+    adding a repo to --repos).
+  - 'wt cleanup' never touches worktrees that live under a workspace
+    (<base>/workspaces/...) -- use 'wt workspace remove <name>' for those.
+  - If WT_CODEGRAPH=true, 'wt workspace' runs 'codegraph init' the first
+    time and 'codegraph index --force' on later re-runs, from the
+    workspace root. Unset or not "true", codegraph is never invoked. See
+    README for how to install codegraph.
 EOF
 }
 
 REPO_ROOT=""
+WORKSPACES_ROOT=""
 
 require_repo() {
     if ! git rev-parse --git-common-dir >/dev/null 2>&1; then
@@ -59,6 +87,10 @@ require_repo() {
     # Root of the bare-repo + worktrees layout (parent of .bare), regardless
     # of whether we're invoked from the bare root or from inside a worktree.
     REPO_ROOT="$(cd "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")" && pwd)"
+
+    # Where 'wt workspace' puts its workspaces for this same base directory.
+    # Only used to tell workspace-owned worktrees apart from regular ones.
+    WORKSPACES_ROOT="$(dirname "$REPO_ROOT")/workspaces"
 }
 
 validate_branch_name() {
@@ -75,9 +107,67 @@ validate_branch_name() {
     fi
 }
 
+# Validates a plain single-path-segment name (workspace name, repo name):
+# non-empty, not an option-looking string, no slashes.
+validate_simple_name() {
+    local label="$1" value="$2"
+
+    if [ -z "$value" ]; then
+        echo "Error: $label cannot be empty." >&2
+        exit 1
+    fi
+
+    if [[ "$value" == -* || "$value" == */* ]]; then
+        echo "Error: invalid $label '$value'." >&2
+        exit 1
+    fi
+}
+
 worktree_exists_for_branch() {
     local branch="$1"
     git worktree list --porcelain | grep -q "^branch refs/heads/$branch\$"
+}
+
+# Path of the worktree checked out on <branch> in the repo at <repo_root>,
+# or nothing (exit 1) if <branch> has no worktree there.
+worktree_path_for_branch() {
+    local repo_root="$1" branch="$2"
+    git -C "$repo_root" worktree list --porcelain | awk -v b="refs/heads/$branch" '
+        /^worktree / { path = substr($0, 10) }
+        $0 == "branch " b { print path; found=1 }
+        END { exit !found }
+    '
+}
+
+# Removes now-empty parent directories left behind by a removed worktree
+# (e.g. nested branch names like feature/foo), stopping at (and never
+# removing) <floor>.
+rmdir_empty_parents() {
+    local path="$1" floor="$2" parent
+    parent="$(dirname "$path")"
+    while [ "$parent" != "$floor" ] && [ -d "$parent" ] && [ -z "$(ls -A "$parent")" ]; do
+        rmdir "$parent"
+        parent="$(dirname "$parent")"
+    done
+}
+
+# The directory rmdir_empty_parents must not climb above for <path>: the
+# owning workspace root for a workspace-owned worktree, REPO_ROOT otherwise.
+floor_for_worktree() {
+    local path="$1"
+    case "$path" in
+        "$WORKSPACES_ROOT"/*)
+            local rel="${path#"$WORKSPACES_ROOT"/}"
+            echo "$WORKSPACES_ROOT/${rel%%/*}"
+            ;;
+        *)
+            echo "$REPO_ROOT"
+            ;;
+    esac
+}
+
+codegraph_enabled() {
+    [ "${WT_CODEGRAPH:-}" = "true" ]
 }
 
 # Shared by 'wt update' and 'wt cleanup'. Assumes require_repo already ran.
@@ -292,14 +382,14 @@ if [ "$1" = "remove" ]; then
         exit 1
     fi
 
-    if ! worktree_exists_for_branch "$BRANCH"; then
+    WORKTREE_PATH="$(worktree_path_for_branch "$REPO_ROOT" "$BRANCH" || true)"
+
+    if [ -z "$WORKTREE_PATH" ]; then
         echo "Error: no worktree found for branch '$BRANCH'." >&2
         echo
         git worktree list
         exit 1
     fi
-
-    WORKTREE_PATH="$REPO_ROOT/$BRANCH"
 
     echo "Removing worktree: $WORKTREE_PATH"
     if ! git worktree remove "$WORKTREE_PATH"; then
@@ -309,13 +399,7 @@ if [ "$1" = "remove" ]; then
         exit 1
     fi
 
-    # Clean up now-empty parent directories left behind by nested branch
-    # names (e.g. feature/foo -> feature/ becomes empty once foo/ is gone)
-    PARENT_DIR="$(dirname "$WORKTREE_PATH")"
-    while [ "$PARENT_DIR" != "$REPO_ROOT" ] && [ -d "$PARENT_DIR" ] && [ -z "$(ls -A "$PARENT_DIR")" ]; do
-        rmdir "$PARENT_DIR"
-        PARENT_DIR="$(dirname "$PARENT_DIR")"
-    done
+    rmdir_empty_parents "$WORKTREE_PATH" "$(floor_for_worktree "$WORKTREE_PATH")"
 
     echo "Deleting local branch: $BRANCH"
     if ! git branch -d "$BRANCH"; then
@@ -357,11 +441,19 @@ if [ "$1" = "cleanup" ]; then
 
     REMOVED=0
     SKIPPED=0
+    SKIPPED_WORKSPACE=0
 
     while IFS=$'\t' read -r WORKTREE_PATH BRANCH; do
         if [ "$WORKTREE_PATH" = "$REPO_ROOT/primary" ]; then
             continue
         fi
+
+        case "$WORKTREE_PATH" in
+            "$WORKSPACES_ROOT"/*)
+                SKIPPED_WORKSPACE=$((SKIPPED_WORKSPACE + 1))
+                continue
+                ;;
+        esac
 
         if ! git worktree remove "$WORKTREE_PATH" >/dev/null 2>&1; then
             echo "Skipped '$BRANCH': has uncommitted changes (or is locked)."
@@ -369,13 +461,7 @@ if [ "$1" = "cleanup" ]; then
             continue
         fi
 
-        # Clean up now-empty parent directories left behind by nested branch
-        # names (e.g. feature/foo -> feature/ becomes empty once foo/ is gone)
-        PARENT_DIR="$(dirname "$WORKTREE_PATH")"
-        while [ "$PARENT_DIR" != "$REPO_ROOT" ] && [ -d "$PARENT_DIR" ] && [ -z "$(ls -A "$PARENT_DIR")" ]; do
-            rmdir "$PARENT_DIR"
-            PARENT_DIR="$(dirname "$PARENT_DIR")"
-        done
+        rmdir_empty_parents "$WORKTREE_PATH" "$REPO_ROOT"
 
         # Remote branches are never touched by 'wt cleanup' -- use
         # 'wt remove <branch>' if you also want to delete the remote branch.
@@ -393,9 +479,289 @@ if [ "$1" = "cleanup" ]; then
 
     echo
     echo "Cleanup: removed $REMOVED worktree(s), skipped $SKIPPED."
+    if [ "$SKIPPED_WORKSPACE" -gt 0 ]; then
+        echo "Left $SKIPPED_WORKSPACE workspace-owned worktree(s) untouched -- use 'wt workspace remove <name>'."
+    fi
     echo
 
     run_update
+
+    exit 0
+fi
+
+
+# ------------------------------------------------------------
+# wt workspace <name> --repos <r1,r2,...> [--base <dir>]
+# wt workspace remove <name> [--base <dir>]
+# ------------------------------------------------------------
+
+if [ "$1" = "workspace" ]; then
+    shift
+
+    if [ "${1-}" = "" ]; then
+        echo "Usage: wt workspace <name> --repos <repo1,repo2,...> [--base <dir>]" >&2
+        echo "       wt workspace remove <name> [--base <dir>]" >&2
+        exit 1
+    fi
+
+
+    # --------------------------------------------------------
+    # wt workspace remove <name> [--base <dir>]
+    # --------------------------------------------------------
+
+    if [ "$1" = "remove" ]; then
+        shift
+
+        if [ "$#" -lt 1 ]; then
+            echo "Usage: wt workspace remove <name> [--base <dir>]" >&2
+            exit 1
+        fi
+
+        WS_NAME="$1"
+        shift
+        WS_BASE="$HOME/repos"
+
+        if [ "$#" -gt 0 ]; then
+            if [ "$1" != "--base" ] || [ "$#" -ne 2 ]; then
+                echo "Usage: wt workspace remove <name> [--base <dir>]" >&2
+                exit 1
+            fi
+            WS_BASE="$2"
+        fi
+
+        validate_simple_name "workspace name" "$WS_NAME"
+
+        if [ ! -d "$WS_BASE" ]; then
+            echo "Error: base directory '$WS_BASE' does not exist." >&2
+            exit 1
+        fi
+        WS_BASE="$(cd "$WS_BASE" && pwd)"
+        WS_ROOT="$WS_BASE/workspaces/$WS_NAME"
+
+        if [ ! -f "$WS_ROOT/.wt-workspace" ]; then
+            echo "Error: no workspace metadata at '$WS_ROOT/.wt-workspace'." >&2
+            echo "(pass --base if this workspace was created with a non-default one)" >&2
+            exit 1
+        fi
+
+        WS_REPOS="$(grep '^repos=' "$WS_ROOT/.wt-workspace" | cut -d= -f2-)"
+        IFS=',' read -r -a REPO_ARR <<< "$WS_REPOS"
+
+        echo "Workspace '$WS_NAME' (branch '$WS_NAME' in each repo):"
+        for repo in "${REPO_ARR[@]}"; do
+            echo "  - $repo"
+        done
+        echo
+
+        read -r -p "Remove all worktrees and local branches above? [y/N] " -n 1 REPLY
+        echo
+        if [[ ! "$REPLY" =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            exit 0
+        fi
+
+        read -r -p "Also delete the matching origin branch in each repo? [y/N] " -n 1 REPLY_REMOTE
+        echo
+        echo
+
+        for repo in "${REPO_ARR[@]}"; do
+            REPO_ROOT_I="$WS_BASE/$repo"
+            WORKTREE_PATH="$WS_ROOT/$repo"
+
+            if [ ! -d "$REPO_ROOT_I/.bare" ]; then
+                echo "[$repo] not a wt-layout repo under '$WS_BASE', skipping."
+                continue
+            fi
+
+            if [ ! -d "$WORKTREE_PATH" ]; then
+                echo "[$repo] no worktree at '$WORKTREE_PATH', skipping."
+                continue
+            fi
+
+            if ! git -C "$REPO_ROOT_I" worktree remove "$WORKTREE_PATH" 2>/dev/null; then
+                echo "[$repo] has uncommitted changes (or is locked), skipping -- remove it yourself with:"
+                echo "    git -C '$REPO_ROOT_I' worktree remove --force '$WORKTREE_PATH'"
+                continue
+            fi
+
+            if git -C "$REPO_ROOT_I" branch -d "$WS_NAME" >/dev/null 2>&1; then
+                echo "[$repo] removed worktree + local branch."
+            else
+                echo "[$repo] removed worktree, kept branch (not fully merged)."
+            fi
+
+            if [[ "$REPLY_REMOTE" =~ ^[Yy]$ ]]; then
+                git -C "$REPO_ROOT_I" push origin --delete "$WS_NAME" 2>/dev/null \
+                    && echo "[$repo] deleted origin/$WS_NAME." \
+                    || echo "[$repo] no origin/$WS_NAME to delete."
+            fi
+        done
+
+        rm -f "$WS_ROOT/.wt-workspace"
+        if rmdir "$WS_ROOT" 2>/dev/null; then
+            echo
+            echo "Removed workspace: $WS_ROOT"
+        else
+            echo
+            echo "Note: '$WS_ROOT' left in place (still has files -- codegraph index, or a repo that was skipped above)."
+        fi
+
+        exit 0
+    fi
+
+
+    # --------------------------------------------------------
+    # wt workspace <name> --repos <r1,r2,...> [--base <dir>]
+    # --------------------------------------------------------
+
+    if [ "$#" -lt 1 ]; then
+        echo "Usage: wt workspace <name> --repos <repo1,repo2,...> [--base <dir>]" >&2
+        exit 1
+    fi
+
+    WS_NAME="$1"
+    shift
+
+    WS_BASE="$HOME/repos"
+    WS_REPOS=""
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --repos)
+                [ "$#" -ge 2 ] || { echo "Error: --repos needs a value." >&2; exit 1; }
+                WS_REPOS="$2"
+                shift 2
+                ;;
+            --base)
+                [ "$#" -ge 2 ] || { echo "Error: --base needs a value." >&2; exit 1; }
+                WS_BASE="$2"
+                shift 2
+                ;;
+            *)
+                echo "Error: unknown option '$1'." >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    validate_simple_name "workspace name" "$WS_NAME"
+
+    if [ -z "$WS_REPOS" ]; then
+        echo "Error: --repos is required, e.g. --repos repo1,repo2,repo3." >&2
+        exit 1
+    fi
+
+    if [ ! -d "$WS_BASE" ]; then
+        echo "Error: base directory '$WS_BASE' does not exist." >&2
+        exit 1
+    fi
+    WS_BASE="$(cd "$WS_BASE" && pwd)"
+
+    IFS=',' read -r -a REPO_ARR <<< "$WS_REPOS"
+
+    if [ "${#REPO_ARR[@]}" -eq 0 ]; then
+        echo "Error: --repos is empty." >&2
+        exit 1
+    fi
+
+    # Validate every repo up front so a typo doesn't leave the workspace
+    # half-created.
+    for repo in "${REPO_ARR[@]}"; do
+        validate_simple_name "repo name" "$repo"
+        if [ ! -d "$WS_BASE/$repo/.bare" ]; then
+            echo "Error: '$WS_BASE/$repo' is not a wt-layout repo (missing .bare)." >&2
+            exit 1
+        fi
+    done
+
+    WS_ROOT="$WS_BASE/workspaces/$WS_NAME"
+    mkdir -p "$WS_ROOT"
+
+    CREATED_REPOS=()
+    CREATED_PATHS=()
+
+    rollback_workspace() {
+        echo
+        echo "Error creating workspace '$WS_NAME', rolling back what was created..." >&2
+        local i
+        for ((i = 0; i < ${#CREATED_PATHS[@]}; i++)); do
+            git -C "$WS_BASE/${CREATED_REPOS[$i]}" worktree remove --force "${CREATED_PATHS[$i]}" >/dev/null 2>&1 || true
+        done
+        rmdir "$WS_ROOT" 2>/dev/null || true
+    }
+    trap rollback_workspace ERR
+
+    echo "Workspace: $WS_ROOT"
+    echo "Branch:    $WS_NAME"
+    echo
+
+    for repo in "${REPO_ARR[@]}"; do
+        REPO_ROOT_I="$WS_BASE/$repo"
+        WORKTREE_PATH="$WS_ROOT/$repo"
+
+        EXISTING_PATH="$(worktree_path_for_branch "$REPO_ROOT_I" "$WS_NAME" || true)"
+
+        if [ -n "$EXISTING_PATH" ]; then
+            if [ "$EXISTING_PATH" = "$WORKTREE_PATH" ]; then
+                echo "[$repo] Reusing existing worktree: $WORKTREE_PATH"
+                continue
+            fi
+            echo "Error: [$repo] branch '$WS_NAME' is already checked out elsewhere: $EXISTING_PATH" >&2
+            # explicit 'exit' does not fire an ERR trap -- roll back by hand.
+            trap - ERR
+            rollback_workspace
+            exit 1
+        fi
+
+        git -C "$REPO_ROOT_I" fetch --all --prune
+        git -C "$REPO_ROOT_I" worktree prune
+
+        if git -C "$REPO_ROOT_I" show-ref --verify --quiet "refs/heads/$WS_NAME"; then
+            echo "[$repo] Local branch found: $WS_NAME"
+            git -C "$REPO_ROOT_I" worktree add "$WORKTREE_PATH" "$WS_NAME"
+
+        elif git -C "$REPO_ROOT_I" show-ref --verify --quiet "refs/remotes/origin/$WS_NAME"; then
+            echo "[$repo] Remote branch found: origin/$WS_NAME"
+            git -C "$REPO_ROOT_I" worktree add --track -b "$WS_NAME" "$WORKTREE_PATH" "origin/$WS_NAME"
+
+        else
+            DEFAULT_BRANCH_I="$(git -C "$REPO_ROOT_I" symbolic-ref --short refs/remotes/origin/HEAD)"
+            DEFAULT_BRANCH_I="${DEFAULT_BRANCH_I#origin/}"
+            echo "[$repo] Branch '$WS_NAME' does not exist, creating from: $DEFAULT_BRANCH_I"
+            git -C "$REPO_ROOT_I" worktree add --no-track -b "$WS_NAME" "$WORKTREE_PATH" "origin/$DEFAULT_BRANCH_I"
+        fi
+
+        echo "[$repo] Worktree ready: $WORKTREE_PATH"
+        CREATED_REPOS+=("$repo")
+        CREATED_PATHS+=("$WORKTREE_PATH")
+    done
+
+    trap - ERR
+
+    cat > "$WS_ROOT/.wt-workspace" <<WSMETA
+name=$WS_NAME
+base=$WS_BASE
+repos=$WS_REPOS
+WSMETA
+
+    if codegraph_enabled; then
+        if ! command -v codegraph >/dev/null 2>&1; then
+            echo
+            echo "Warning: WT_CODEGRAPH=true but 'codegraph' is not on PATH, skipping indexing." >&2
+        elif [ -d "$WS_ROOT/.codegraph" ]; then
+            echo
+            echo "Reindexing codegraph..."
+            (cd "$WS_ROOT" && codegraph index --force) || echo "Warning: 'codegraph index --force' failed." >&2
+        else
+            echo
+            echo "Initializing codegraph..."
+            (cd "$WS_ROOT" && codegraph init) || echo "Warning: 'codegraph init' failed." >&2
+        fi
+    fi
+
+    echo
+    echo "Workspace ready:"
+    echo "  $WS_ROOT"
 
     exit 0
 fi
