@@ -19,12 +19,15 @@ Usage:
   wt remove <branch>     Remove a worktree and its local branch
   wt cleanup             Remove every worktree except primary, then update
   wt update              Fetch all remotes, fast-forward primary, and list worktrees
-  wt workspace <name> --repos <r1,r2,...> [--base <dir>]
+  wt workspace <name> --repos <r1,r2,...> [--repo-base <dir>]
                          Create (or update) a multi-repo workspace: one
                          worktree per repo, all rooted under
-                         <base>/workspaces/<name>/<repo>, all on branch
-                         <name>
-  wt workspace remove <name> [--base <dir>]
+                         <parent-of-repo-base>/workspaces/<name>/<repo>,
+                         all on branch <name>. <repo-base> is where the
+                         repos themselves live (default ~/repos); the
+                         'workspaces' folder is created next to it, not
+                         inside it.
+  wt workspace remove <name> [--repo-base <dir>]
                          Remove every worktree in a workspace, then the
                          workspace directory itself
   wt help                Show this help
@@ -35,12 +38,14 @@ Layout created by 'wt clone':
   <repo>/primary         Permanent worktree checked out on the default branch
   <repo>/<branch>        Worktree created on demand by 'wt <branch>'
 
-Layout created by 'wt workspace':
-  <base>/workspaces/<name>/<repo>
+Layout created by 'wt workspace' (with the default --repo-base of ~/repos):
+  ~/workspaces/<name>/<repo>
                          One worktree per repo listed in --repos, all
-                         checked out on branch <name>.
-  <base>/workspaces/<name>/.wt-workspace
-                         Metadata (name, base, repos) read back by
+                         checked out on branch <name>. 'workspaces' is a
+                         sibling of the repos base directory, not nested
+                         inside it.
+  ~/workspaces/<name>/.wt-workspace
+                         Metadata (name, repo_base, repos) read back by
                          'wt workspace remove'. Don't edit by hand.
 
 Notes:
@@ -66,7 +71,8 @@ Notes:
     already exist and only creates the ones that are missing (e.g. after
     adding a repo to --repos).
   - 'wt cleanup' never touches worktrees that live under a workspace
-    (<base>/workspaces/...) -- use 'wt workspace remove <name>' for those.
+    (the 'workspaces' folder next to the repos base dir) -- use
+    'wt workspace remove <name>' for those.
   - If WT_CODEGRAPH=true, 'wt workspace' runs 'codegraph init' the first
     time and 'codegraph index --force' on later re-runs, from the
     workspace root. Unset or not "true", codegraph is never invoked. See
@@ -88,9 +94,11 @@ require_repo() {
     # of whether we're invoked from the bare root or from inside a worktree.
     REPO_ROOT="$(cd "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")" && pwd)"
 
-    # Where 'wt workspace' puts its workspaces for this same base directory.
-    # Only used to tell workspace-owned worktrees apart from regular ones.
-    WORKSPACES_ROOT="$(dirname "$REPO_ROOT")/workspaces"
+    # Where 'wt workspace' puts its workspaces: a sibling of the repos base
+    # directory (e.g. repos in ~/repos -> workspaces in ~/workspaces), not
+    # nested inside it. Only used to tell workspace-owned worktrees apart
+    # from regular ones.
+    WORKSPACES_ROOT="$(dirname "$(dirname "$REPO_ROOT")")/workspaces"
 }
 
 validate_branch_name() {
@@ -491,56 +499,56 @@ fi
 
 
 # ------------------------------------------------------------
-# wt workspace <name> --repos <r1,r2,...> [--base <dir>]
-# wt workspace remove <name> [--base <dir>]
+# wt workspace <name> --repos <r1,r2,...> [--repo-base <dir>]
+# wt workspace remove <name> [--repo-base <dir>]
 # ------------------------------------------------------------
 
 if [ "$1" = "workspace" ]; then
     shift
 
     if [ "${1-}" = "" ]; then
-        echo "Usage: wt workspace <name> --repos <repo1,repo2,...> [--base <dir>]" >&2
-        echo "       wt workspace remove <name> [--base <dir>]" >&2
+        echo "Usage: wt workspace <name> --repos <repo1,repo2,...> [--repo-base <dir>]" >&2
+        echo "       wt workspace remove <name> [--repo-base <dir>]" >&2
         exit 1
     fi
 
 
     # --------------------------------------------------------
-    # wt workspace remove <name> [--base <dir>]
+    # wt workspace remove <name> [--repo-base <dir>]
     # --------------------------------------------------------
 
     if [ "$1" = "remove" ]; then
         shift
 
         if [ "$#" -lt 1 ]; then
-            echo "Usage: wt workspace remove <name> [--base <dir>]" >&2
+            echo "Usage: wt workspace remove <name> [--repo-base <dir>]" >&2
             exit 1
         fi
 
         WS_NAME="$1"
         shift
-        WS_BASE="$HOME/repos"
+        WS_REPO_BASE="$HOME/repos"
 
         if [ "$#" -gt 0 ]; then
-            if [ "$1" != "--base" ] || [ "$#" -ne 2 ]; then
-                echo "Usage: wt workspace remove <name> [--base <dir>]" >&2
+            if [ "$1" != "--repo-base" ] || [ "$#" -ne 2 ]; then
+                echo "Usage: wt workspace remove <name> [--repo-base <dir>]" >&2
                 exit 1
             fi
-            WS_BASE="$2"
+            WS_REPO_BASE="$2"
         fi
 
         validate_simple_name "workspace name" "$WS_NAME"
 
-        if [ ! -d "$WS_BASE" ]; then
-            echo "Error: base directory '$WS_BASE' does not exist." >&2
+        if [ ! -d "$WS_REPO_BASE" ]; then
+            echo "Error: repo base directory '$WS_REPO_BASE' does not exist." >&2
             exit 1
         fi
-        WS_BASE="$(cd "$WS_BASE" && pwd)"
-        WS_ROOT="$WS_BASE/workspaces/$WS_NAME"
+        WS_REPO_BASE="$(cd "$WS_REPO_BASE" && pwd)"
+        WS_ROOT="$(dirname "$WS_REPO_BASE")/workspaces/$WS_NAME"
 
         if [ ! -f "$WS_ROOT/.wt-workspace" ]; then
             echo "Error: no workspace metadata at '$WS_ROOT/.wt-workspace'." >&2
-            echo "(pass --base if this workspace was created with a non-default one)" >&2
+            echo "(pass --repo-base if this workspace was created with a non-default one)" >&2
             exit 1
         fi
 
@@ -565,11 +573,11 @@ if [ "$1" = "workspace" ]; then
         echo
 
         for repo in "${REPO_ARR[@]}"; do
-            REPO_ROOT_I="$WS_BASE/$repo"
+            REPO_ROOT_I="$WS_REPO_BASE/$repo"
             WORKTREE_PATH="$WS_ROOT/$repo"
 
             if [ ! -d "$REPO_ROOT_I/.bare" ]; then
-                echo "[$repo] not a wt-layout repo under '$WS_BASE', skipping."
+                echo "[$repo] not a wt-layout repo under '$WS_REPO_BASE', skipping."
                 continue
             fi
 
@@ -611,18 +619,18 @@ if [ "$1" = "workspace" ]; then
 
 
     # --------------------------------------------------------
-    # wt workspace <name> --repos <r1,r2,...> [--base <dir>]
+    # wt workspace <name> --repos <r1,r2,...> [--repo-base <dir>]
     # --------------------------------------------------------
 
     if [ "$#" -lt 1 ]; then
-        echo "Usage: wt workspace <name> --repos <repo1,repo2,...> [--base <dir>]" >&2
+        echo "Usage: wt workspace <name> --repos <repo1,repo2,...> [--repo-base <dir>]" >&2
         exit 1
     fi
 
     WS_NAME="$1"
     shift
 
-    WS_BASE="$HOME/repos"
+    WS_REPO_BASE="$HOME/repos"
     WS_REPOS=""
 
     while [ "$#" -gt 0 ]; do
@@ -632,9 +640,9 @@ if [ "$1" = "workspace" ]; then
                 WS_REPOS="$2"
                 shift 2
                 ;;
-            --base)
-                [ "$#" -ge 2 ] || { echo "Error: --base needs a value." >&2; exit 1; }
-                WS_BASE="$2"
+            --repo-base)
+                [ "$#" -ge 2 ] || { echo "Error: --repo-base needs a value." >&2; exit 1; }
+                WS_REPO_BASE="$2"
                 shift 2
                 ;;
             *)
@@ -651,11 +659,11 @@ if [ "$1" = "workspace" ]; then
         exit 1
     fi
 
-    if [ ! -d "$WS_BASE" ]; then
-        echo "Error: base directory '$WS_BASE' does not exist." >&2
+    if [ ! -d "$WS_REPO_BASE" ]; then
+        echo "Error: repo base directory '$WS_REPO_BASE' does not exist." >&2
         exit 1
     fi
-    WS_BASE="$(cd "$WS_BASE" && pwd)"
+    WS_REPO_BASE="$(cd "$WS_REPO_BASE" && pwd)"
 
     IFS=',' read -r -a REPO_ARR <<< "$WS_REPOS"
 
@@ -668,13 +676,13 @@ if [ "$1" = "workspace" ]; then
     # half-created.
     for repo in "${REPO_ARR[@]}"; do
         validate_simple_name "repo name" "$repo"
-        if [ ! -d "$WS_BASE/$repo/.bare" ]; then
-            echo "Error: '$WS_BASE/$repo' is not a wt-layout repo (missing .bare)." >&2
+        if [ ! -d "$WS_REPO_BASE/$repo/.bare" ]; then
+            echo "Error: '$WS_REPO_BASE/$repo' is not a wt-layout repo (missing .bare)." >&2
             exit 1
         fi
     done
 
-    WS_ROOT="$WS_BASE/workspaces/$WS_NAME"
+    WS_ROOT="$(dirname "$WS_REPO_BASE")/workspaces/$WS_NAME"
     mkdir -p "$WS_ROOT"
 
     CREATED_REPOS=()
@@ -685,7 +693,7 @@ if [ "$1" = "workspace" ]; then
         echo "Error creating workspace '$WS_NAME', rolling back what was created..." >&2
         local i
         for ((i = 0; i < ${#CREATED_PATHS[@]}; i++)); do
-            git -C "$WS_BASE/${CREATED_REPOS[$i]}" worktree remove --force "${CREATED_PATHS[$i]}" >/dev/null 2>&1 || true
+            git -C "$WS_REPO_BASE/${CREATED_REPOS[$i]}" worktree remove --force "${CREATED_PATHS[$i]}" >/dev/null 2>&1 || true
         done
         rmdir "$WS_ROOT" 2>/dev/null || true
     }
@@ -696,7 +704,7 @@ if [ "$1" = "workspace" ]; then
     echo
 
     for repo in "${REPO_ARR[@]}"; do
-        REPO_ROOT_I="$WS_BASE/$repo"
+        REPO_ROOT_I="$WS_REPO_BASE/$repo"
         WORKTREE_PATH="$WS_ROOT/$repo"
 
         EXISTING_PATH="$(worktree_path_for_branch "$REPO_ROOT_I" "$WS_NAME" || true)"
@@ -740,7 +748,7 @@ if [ "$1" = "workspace" ]; then
 
     cat > "$WS_ROOT/.wt-workspace" <<WSMETA
 name=$WS_NAME
-base=$WS_BASE
+repo_base=$WS_REPO_BASE
 repos=$WS_REPOS
 WSMETA
 

@@ -45,9 +45,9 @@ wt <branch> --from <base-branch>
 wt remove <branch>     Remove a worktree and its local branch
 wt cleanup             Remove every worktree except primary, then update
 wt update              Fetch all remotes, fast-forward primary, and list worktrees
-wt workspace <name> --repos <r1,r2,...> [--base <dir>]
+wt workspace <name> --repos <r1,r2,...> [--repo-base <dir>]
                         Create (or update) a multi-repo workspace
-wt workspace remove <name> [--base <dir>]
+wt workspace remove <name> [--repo-base <dir>]
                         Remove every worktree in a workspace, then the
                         workspace directory itself
 wt help                Show this help
@@ -150,7 +150,7 @@ wt workspace DOM-1784 --repos api,worker,frontend
 This creates:
 
 ```
-~/repos/workspaces/DOM-1784/
+~/workspaces/DOM-1784/
 ├── .wt-workspace        # metadata read back by 'wt workspace remove'
 ├── api/                 # worktree on branch DOM-1784
 ├── worker/              # worktree on branch DOM-1784
@@ -158,9 +158,13 @@ This creates:
 ```
 
 - `--repos` is a comma-separated list of repos that already use the
-  `wt` bare-repo + worktrees layout under `--base` (i.e. each one has
-  `<base>/<repo>/.bare`).
-- `--base` defaults to `~/repos` if omitted.
+  `wt` bare-repo + worktrees layout under `--repo-base` (i.e. each one
+  has `<repo-base>/<repo>/.bare`).
+- `--repo-base` is where the repos themselves live and defaults to
+  `~/repos` if omitted. The `workspaces` folder is created as a
+  **sibling** of `--repo-base`, not nested inside it — with the default
+  `--repo-base`, that's `~/workspaces` (since `~/repos` and
+  `~/workspaces` both live directly under `~`).
 - `<name>` becomes the branch name in every repo, exactly like the
   `<branch>` argument to plain `wt <branch>` (existing local branch,
   existing remote branch, or a new branch off the default branch, in
@@ -174,10 +178,10 @@ This creates:
   `--repos`) reuses worktrees that already exist and only creates the
   ones that are missing.
 
-Open `~/repos/workspaces/DOM-1784` as a single folder in your editor to
+Open `~/workspaces/DOM-1784` as a single folder in your editor to
 see and diff all three repos together.
 
-`wt workspace remove <name> [--base <dir>]` removes every worktree in
+`wt workspace remove <name> [--repo-base <dir>]` removes every worktree in
 the workspace (and its local branch, same rules as `wt remove`), then
 the workspace directory itself. It asks once whether to also delete the
 matching branch on `origin` for every repo, instead of prompting repo
