@@ -41,6 +41,8 @@ are stored in settings.toml under [bundles.<name>].`,
 		},
 	}
 	cmd.Flags().StringSliceVar(&repos, "repos", nil, "repositories in the bundle: repo or repo@branch, comma-separated (no value: pick interactively)")
+	cmd.ValidArgsFunction = completeFirstArg(app.bundleNames)
+	registerListCompletion(cmd, "repos", func([]string) []string { return app.repoNames() })
 	cmd.AddCommand(newBundleListCmd(app), newBundleRemoveCmd(app))
 	return cmd
 }
@@ -181,10 +183,11 @@ func newBundleListCmd(app *App) *cobra.Command {
 
 func newBundleRemoveCmd(app *App) *cobra.Command {
 	return &cobra.Command{
-		Use:     "remove <name>",
-		Aliases: []string{"rm"},
-		Short:   "Delete a bundle (repositories and workspaces are not touched)",
-		Args:    cobra.ExactArgs(1),
+		Use:               "remove <name>",
+		Aliases:           []string{"rm"},
+		Short:             "Delete a bundle (repositories and workspaces are not touched)",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeFirstArg(app.bundleNames),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := app.Config()
 			if err != nil {

@@ -34,6 +34,10 @@ checkout, and builds workspaces (~/workspaces/<name>/) out of git worktrees.`,
 		newCloneCmd(app),
 		newWorkspaceCmd(app),
 		newBundleCmd(app),
+		newOpenCmd(app),
+		newCdCmd(app),
+		newResolveCdCmd(app),
+		newShellInitCmd(),
 	)
 	return root
 }

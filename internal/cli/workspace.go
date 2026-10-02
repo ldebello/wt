@@ -57,6 +57,9 @@ local branch, else origin/<name>, else a new branch from origin/<default>
 	cmd.Flags().StringSliceVar(&bundles, "bundles", nil, "bundles to add, comma-separated (no value: pick interactively)")
 	cmd.Flags().StringVar(&from, "from", "", "base for newly created branches instead of the default branch")
 	cmd.Flags().BoolVar(&fetch, "fetch", false, "fetch the repositories before resolving branches")
+	cmd.ValidArgsFunction = completeFirstArg(app.workspaceNames)
+	registerListCompletion(cmd, "repos", func([]string) []string { return app.repoNames() })
+	registerListCompletion(cmd, "bundles", func([]string) []string { return app.bundleNames() })
 	cmd.AddCommand(newWorkspaceListCmd(app), newWorkspaceRemoveCmd(app))
 	return cmd
 }
@@ -286,6 +289,13 @@ only when confirmed (or with --delete-remote).`,
 	cmd.Flags().StringSliceVar(&repos, "repos", nil, "only remove these repositories (no value: pick interactively)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
 	cmd.Flags().BoolVar(&deleteRemote, "delete-remote", false, "also delete the branches on origin")
+	cmd.ValidArgsFunction = completeFirstArg(app.workspaceNames)
+	registerListCompletion(cmd, "repos", func(args []string) []string {
+		if len(args) == 0 {
+			return nil
+		}
+		return app.workspaceRepos(args[0])
+	})
 	return cmd
 }
 
