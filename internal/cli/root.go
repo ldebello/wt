@@ -33,6 +33,7 @@ checkout, and builds workspaces (~/workspaces/<name>/) out of git worktrees.`,
 	root.AddCommand(
 		newCloneCmd(app),
 		newWorkspaceCmd(app),
+		newBundleCmd(app),
 	)
 	return root
 }
