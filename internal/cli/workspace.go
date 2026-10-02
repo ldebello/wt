@@ -405,9 +405,3 @@ func splitList(items []string) []string {
 	}
 	return out
 }
-
-// runWorkspaceHooks and cleanupWorkspaceHooks are replaced by the
-// integrations framework.
-func runWorkspaceHooks(ctx context.Context, app *App, ws workspace.Workspace) error { return nil }
-
-func cleanupWorkspaceHooks(ctx context.Context, app *App, ws workspace.Workspace) error { return nil }
