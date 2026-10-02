@@ -9,6 +9,7 @@ import (
 	"github.com/ldebello/wt/internal/config"
 	"github.com/ldebello/wt/internal/repo"
 	"github.com/ldebello/wt/internal/ui"
+	"github.com/ldebello/wt/internal/workspace"
 )
 
 // App holds the dependencies shared by all commands. Tests build their own
@@ -53,6 +54,16 @@ func (a *App) Index() (repo.Index, error) {
 	}
 	dir, err := cfg.ReposDir()
 	return repo.Index{Dir: dir}, err
+}
+
+// Workspaces returns the workspace manager from the configured paths.
+func (a *App) Workspaces() (workspace.Manager, error) {
+	ix, err := a.Index()
+	if err != nil {
+		return workspace.Manager{}, err
+	}
+	dir, err := a.cfg.WorkspacesDir()
+	return workspace.Manager{Index: ix, Dir: dir}, err
 }
 
 func (a *App) printf(format string, args ...any) {

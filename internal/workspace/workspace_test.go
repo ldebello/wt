@@ -1,0 +1,325 @@
+package workspace
+
+import (
+	"context"
+	"io"
+	"os"
+	osexec "os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/ldebello/wt/internal/repo"
+	"github.com/ldebello/wt/internal/testutil"
+)
+
+func TestParseSpecs(t *testing.T) {
+	got, err := ParseSpecs([]string{"a@feature/x,b", " c "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Spec{{"a", "feature/x"}, {"b", ""}, {"c", ""}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v", got)
+	}
+	for _, bad := range []string{"@x", "a@", "@"} {
+		if _, err := ParseSpec(bad); err == nil {
+			t.Errorf("ParseSpec(%q): expected error", bad)
+		}
+	}
+}
+
+func TestCombine(t *testing.T) {
+	bundles := []NamedSpecs{
+		{Name: "backend", Specs: []Spec{{"api", ""}, {"db", "v1"}, {"shared", "main"}}},
+		{Name: "frontend", Specs: []Spec{{"web", ""}, {"db", "v2"}, {"shared", "main"}}},
+	}
+	explicit := []Spec{{"api", "feature"}, {"web", ""}, {"tools", ""}}
+	got, notes := Combine(bundles, explicit)
+	want := []Spec{{"api", "feature"}, {"db", "v1"}, {"shared", "main"}, {"web", ""}, {"tools", ""}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Combine = %v; want %v", got, want)
+	}
+	joined := strings.Join(notes, "\n")
+	if len(notes) != 2 || !strings.Contains(joined, "db: keeping branch v1 from bundle backend, ignoring branch v2 from bundle frontend") ||
+		!strings.Contains(joined, "api: using branch feature from --repos over the workspace branch from bundle backend") {
+		t.Errorf("notes:\n%s", joined)
+	}
+
+	// An explicit repo without a branch doesn't override a bundle's branch.
+	got, notes = Combine([]NamedSpecs{{Name: "b", Specs: []Spec{{"db", "v1"}}}}, []Spec{{"db", ""}})
+	if got[0].Branch != "v1" || len(notes) != 1 {
+		t.Errorf("got %v, notes %v", got, notes)
+	}
+}
+
+type fixture struct {
+	env *testutil.Env
+	ix  repo.Index
+	m   Manager
+	ups map[string]string // upstream path per repo
+}
+
+func newFixture(t *testing.T, repos ...string) *fixture {
+	t.Helper()
+	env := testutil.Setup(t)
+	f := &fixture{
+		env: env,
+		ix:  repo.Index{Dir: filepath.Join(env.Home, ".repos")},
+		ups: map[string]string{},
+	}
+	f.m = Manager{Index: f.ix, Dir: filepath.Join(env.Home, "workspaces")}
+	for _, name := range repos {
+		f.ups[name] = env.NewUpstream(t, name, "main")
+	}
+	return f
+}
+
+func (f *fixture) clone(t *testing.T, name string) {
+	t.Helper()
+	if _, err := f.ix.Clone(context.Background(), f.ups[name], name, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f *fixture) create(t *testing.T, ws string, specs []Spec, opts Options) []Step {
+	t.Helper()
+	ctx := context.Background()
+	steps, err := f.m.Plan(ctx, ws, specs, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.m.Apply(ctx, ws, steps); err != nil {
+		t.Fatal(err)
+	}
+	return steps
+}
+
+func head(t *testing.T, dir string) string {
+	return testutil.Git(t, dir, "rev-parse", "--abbrev-ref", "HEAD")
+}
+
+func TestCreateResolvesBranches(t *testing.T) {
+	f := newFixture(t, "fresh", "remote", "pinned")
+	testutil.Commit(t, f.ups["remote"], "DOM-1", "r.txt", "on remote")
+	testutil.Commit(t, f.ups["pinned"], "release", "p.txt", "release")
+	for _, name := range []string{"fresh", "remote", "pinned"} {
+		f.clone(t, name)
+	}
+
+	steps := f.create(t, "DOM-1", []Spec{{"fresh", ""}, {"remote", ""}, {"pinned", "release"}}, Options{})
+	actions := []Action{steps[0].Action, steps[1].Action, steps[2].Action}
+	if !reflect.DeepEqual(actions, []Action{CreateBranch, TrackRemote, TrackRemote}) {
+		t.Errorf("actions = %v", actions)
+	}
+	if steps[0].Start != "origin/main" {
+		t.Errorf("start = %q", steps[0].Start)
+	}
+
+	ws := f.m.Path("DOM-1")
+	if got := head(t, filepath.Join(ws, "fresh")); got != "DOM-1" {
+		t.Errorf("fresh on %s", got)
+	}
+	// A new branch has no upstream (push.autoSetupRemote handles the first push).
+	if out, err := tryGit(filepath.Join(ws, "fresh"), "rev-parse", "--abbrev-ref", "@{u}"); err == nil {
+		t.Errorf("new branch unexpectedly tracks %s", out)
+	}
+	if got := testutil.Git(t, filepath.Join(ws, "remote"), "rev-parse", "--abbrev-ref", "@{u}"); got != "origin/DOM-1" {
+		t.Errorf("remote upstream = %s", got)
+	}
+	if got := head(t, filepath.Join(ws, "pinned")); got != "release" {
+		t.Errorf("pinned on %s", got)
+	}
+
+	loaded, err := f.m.Load("DOM-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Members) != 3 || loaded.Members[0].Repo != "fresh" || loaded.Members[0].Branch != "DOM-1" {
+		t.Errorf("Load = %+v", loaded)
+	}
+}
+
+func TestCreateDefaultBranchWorksAlongsidePrimary(t *testing.T) {
+	f := newFixture(t, "app")
+	f.clone(t, "app")
+	f.create(t, "W", []Spec{{"app", "main"}}, Options{})
+	if got := head(t, filepath.Join(f.m.Path("W"), "app")); got != "main" {
+		t.Errorf("on %s", got)
+	}
+}
+
+func TestCreateIncrementalLeavesExistingUntouched(t *testing.T) {
+	f := newFixture(t, "a", "b")
+	f.clone(t, "a")
+	f.clone(t, "b")
+	f.create(t, "W", []Spec{{"a", ""}}, Options{})
+	work := filepath.Join(f.m.Path("W"), "a", "work.txt")
+	testutil.WriteFile(t, work, "uncommitted")
+
+	steps := f.create(t, "W", []Spec{{"a", "other"}, {"b", ""}}, Options{})
+	if steps[0].Action != Reuse || !strings.Contains(steps[0].Describe(), "requested branch other") {
+		t.Errorf("step = %+v (%s)", steps[0], steps[0].Describe())
+	}
+	if data, _ := os.ReadFile(work); string(data) != "uncommitted" {
+		t.Error("existing worktree was modified")
+	}
+	if got := head(t, filepath.Join(f.m.Path("W"), "b")); got != "W" {
+		t.Errorf("b on %s", got)
+	}
+}
+
+func TestCreateLocalBranchAndFrom(t *testing.T) {
+	f := newFixture(t, "app")
+	testutil.Commit(t, f.ups["app"], "release", "r.txt", "r")
+	f.clone(t, "app")
+	ctx := context.Background()
+
+	steps := f.create(t, "W", []Spec{{"app", ""}}, Options{From: "release"})
+	if steps[0].Start != "origin/release" {
+		t.Errorf("start = %q", steps[0].Start)
+	}
+	if _, err := os.Stat(filepath.Join(f.m.Path("W"), "app", "r.txt")); err != nil {
+		t.Error("branch not based on release")
+	}
+
+	// Remove the worktree but keep the branch: re-adding checks it out.
+	testutil.Git(t, f.ix.BarePath("app"), "worktree", "remove", filepath.Join(f.m.Path("W"), "app"))
+	steps = f.create(t, "W", []Spec{{"app", ""}}, Options{})
+	if steps[0].Action != CheckoutLocal {
+		t.Errorf("action = %v", steps[0].Action)
+	}
+
+	if _, err := f.m.Plan(ctx, "X", []Spec{{"app", ""}}, Options{From: "nope"}); err == nil || !strings.Contains(err.Error(), `base branch "nope"`) {
+		t.Errorf("expected missing base error, got %v", err)
+	}
+}
+
+func TestPlanReportsAllProblems(t *testing.T) {
+	f := newFixture(t, "app")
+	f.clone(t, "app")
+	f.create(t, "A", []Spec{{"app", "shared"}}, Options{})
+
+	_, err := f.m.Plan(context.Background(), "B", []Spec{{"app", "shared"}, {"ghost", ""}, {"app", ""}}, Options{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	for _, want := range []string{"already checked out at", `unknown repository "ghost"`, "listed more than once"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q:\n%v", want, err)
+		}
+	}
+	if f.m.Exists("B") {
+		t.Error("workspace created despite plan errors")
+	}
+}
+
+func TestApplyRollsBackOnFailure(t *testing.T) {
+	f := newFixture(t, "a", "b")
+	f.clone(t, "a")
+	f.clone(t, "b")
+	ctx := context.Background()
+
+	steps, err := f.m.Plan(ctx, "W", []Spec{{"a", ""}, {"b", ""}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Something appears at b's target between plan and apply.
+	testutil.WriteFile(t, filepath.Join(f.m.Path("W"), "b", "blocker"), "x")
+	if err := f.m.Apply(ctx, "W", steps); err == nil {
+		t.Fatal("expected apply error")
+	}
+	if _, err := os.Stat(filepath.Join(f.m.Path("W"), "a")); !os.IsNotExist(err) {
+		t.Error("worktree a not rolled back")
+	}
+	if testutil.Git(t, f.ix.BarePath("a"), "branch", "--list", "W") != "" {
+		t.Error("branch W in a not rolled back")
+	}
+	if _, err := os.Stat(filepath.Join(f.m.Path("W"), "b", "blocker")); err != nil {
+		t.Error("rollback removed a file it did not create")
+	}
+}
+
+func TestLoadAndNames(t *testing.T) {
+	f := newFixture(t, "app")
+	f.clone(t, "app")
+	f.create(t, "W", []Spec{{"app", ""}}, Options{})
+	testutil.WriteFile(t, filepath.Join(f.m.Path("W"), "CLAUDE.md"), "x")
+	if err := os.MkdirAll(f.m.Path("Empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	names, _ := f.m.Names()
+	if !reflect.DeepEqual(names, []string{"Empty", "W"}) {
+		t.Errorf("Names = %v", names)
+	}
+	ws, err := f.m.Load("W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ws.RepoNames(), []string{"app"}) || !reflect.DeepEqual(ws.Other, []string{"CLAUDE.md"}) {
+		t.Errorf("Load = %+v", ws)
+	}
+	if _, err := f.m.Load("missing"); err == nil {
+		t.Error("expected error for missing workspace")
+	}
+}
+
+func TestRemoveMembers(t *testing.T) {
+	f := newFixture(t, "merged", "pushed", "local", "dirty")
+	for _, name := range []string{"merged", "pushed", "local", "dirty"} {
+		f.clone(t, name)
+	}
+	f.create(t, "W", []Spec{{"merged", ""}, {"pushed", ""}, {"local", ""}, {"dirty", ""}}, Options{})
+	ws := f.m.Path("W")
+	ctx := context.Background()
+
+	// merged: squash-merged upstream.
+	testutil.Commit(t, filepath.Join(ws, "merged"), "W", "m.txt", "m")
+	testutil.Commit(t, f.ups["merged"], "main", "m.txt", "m")
+	testutil.Git(t, f.ix.BarePath("merged"), "fetch", "-q", "origin")
+	// pushed: on origin, not merged.
+	testutil.Commit(t, filepath.Join(ws, "pushed"), "W", "p.txt", "p")
+	testutil.Git(t, filepath.Join(ws, "pushed"), "push", "-q", "origin", "W")
+	// local: committed but neither pushed nor merged.
+	testutil.Commit(t, filepath.Join(ws, "local"), "W", "l.txt", "l")
+	// dirty: uncommitted file.
+	testutil.WriteFile(t, filepath.Join(ws, "dirty", "d.txt"), "d")
+
+	loaded, _ := f.m.Load("W")
+	results := f.m.RemoveMembers(ctx, loaded.Members, true)
+	byRepo := map[string]RemoveResult{}
+	for _, r := range results {
+		byRepo[r.Repo] = r
+	}
+
+	if r := byRepo["merged"]; !r.Removed || !r.BranchDeleted {
+		t.Errorf("merged: %+v", r)
+	}
+	if r := byRepo["pushed"]; !r.Removed || !r.BranchDeleted || !r.RemoteDeleted {
+		t.Errorf("pushed: %+v", r)
+	}
+	if testutil.Git(t, f.ups["pushed"], "branch", "--list", "W") != "" {
+		t.Error("origin branch not deleted")
+	}
+	if r := byRepo["local"]; !r.Removed || r.BranchDeleted || !strings.Contains(r.BranchKept, "not pushed or merged") {
+		t.Errorf("local: %+v", r)
+	}
+	if testutil.Git(t, f.ix.BarePath("local"), "branch", "--list", "W") == "" {
+		t.Error("unmerged branch was deleted")
+	}
+	if r := byRepo["dirty"]; r.Removed || !strings.Contains(r.Skipped, "uncommitted") {
+		t.Errorf("dirty: %+v", r)
+	}
+
+	left, err := f.m.RemoveDir("W")
+	if err != nil || !reflect.DeepEqual(left, []string{"dirty"}) {
+		t.Errorf("RemoveDir = %v, %v", left, err)
+	}
+}
+
+func tryGit(dir string, args ...string) (string, error) {
+	out, err := osexec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	return string(out), err
+}
