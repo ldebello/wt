@@ -1,289 +1,231 @@
 # wt
 
-A small Bash script to manage git repos using the **bare repo + worktrees**
-pattern: instead of a single checkout where you keep switching branches
-(`git checkout`, stash, checkout, stash pop...), each branch lives in its
-own folder, all sharing the same underlying `.git`, and jumping between
-branches is just a `cd`.
+`wt` manages **multi-repository workspaces** built from git worktrees.
 
-## Installation
+Each repository is cloned once, as a bare repository. A workspace is a
+folder (usually named after a ticket) with one worktree per repository, all
+on the same branch. Creating a workspace never clones and never touches the
+network, so it takes about as long as checking out the files.
+
+```
+~/.repos/
+    domino.git/              # bare clone: the single source of truth
+    domino/                  # primary checkout, detached at origin/<default>
+~/workspaces/
+    DOM-12345/
+        CLAUDE.md            # generated instructions for AI agents (optional)
+        domino/              # git worktree on branch DOM-12345
+        compute-workload-service/
+```
+
+## Install
+
+Requires Go 1.27+ and git 2.38+.
 
 ```bash
-git clone <this-repo>
-cd wt
-make install
+git clone <this-repo> && cd wt
+make install                 # builds and installs to ~/.local/bin/wt
 ```
 
-This copies `wt` to `~/.local/bin/wt` and makes it executable.
-If `~/.local/bin` isn't in your `PATH`, `make install` will warn you and
-show the line to add to your `~/.zshrc` / `~/.bashrc`:
+Use `make install PREFIX=/other/bin` to install somewhere else, and
+`make uninstall` to remove it.
+
+Then enable `wt cd` and tab completion in your shell profile:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+eval "$(wt shell-init zsh)"     # ~/.zshrc, after compinit
+eval "$(wt shell-init bash)"    # ~/.bashrc
+wt shell-init fish | source     # ~/.config/fish/config.fish
 ```
 
-To uninstall:
+Run `wt doctor` to check the setup.
+
+## Quick start
 
 ```bash
-make uninstall
+# 1. Add repositories to the index (once per repository)
+wt clone git@github.com:cerebrotech/domino.git
+wt clone git@github.com:cerebrotech/compute-workload-service.git
+
+# 2. Optional: integrations
+wt integrations codegraph          # index each workspace with CodeGraph
+wt integrations harness claude     # generate CLAUDE.md (enabled by default)
+
+# 3. Optional: a bundle of repositories you often use together
+wt bundle backend --repos domino,compute-workload-service
+
+# 4. Create a workspace and jump into it
+wt ws DOM-80506 --bundles backend
+wt cd DOM-80506
+claude                             # or: wt open DOM-80506
+
+# 5. When the work is merged
+wt cleanup
 ```
 
-To install somewhere else (not `~/.local/bin`):
+## Commands
+
+| Command | What it does |
+|---|---|
+| `wt clone <url> [--name alias]` | Add a repository: bare clone plus primary checkout |
+| `wt workspace <name> [--repos ...] [--bundles ...]` | Create a workspace or add repositories to it (alias: `ws`) |
+| `wt ws list` | List workspaces as `repo@branch` (`*` = uncommitted changes) |
+| `wt ws remove <name> [--repos ...]` | Remove a workspace, or only some of its repositories |
+| `wt bundle <name> --repos ...` | Create or update a bundle (`wt bundle <name>` shows it) |
+| `wt bundle list` / `wt bundle remove <name>` | List or delete bundles |
+| `wt cd [target]` | `cd` into a workspace, `<workspace>/<repo>`, or a primary checkout |
+| `wt open [target]` | Open the same targets in your editor |
+| `wt sync [repo...]` | Fetch every repository in parallel and update the primary checkouts |
+| `wt cleanup` | Classify workspaces and remove the merged ones you select |
+| `wt integrations [codegraph \| harness <name>]` | List integrations, or enable one (`--disable` turns it off) |
+| `wt doctor [--fix]` | Health checks, with repairs for common problems |
+| `wt shell-init <zsh\|bash\|fish>` / `wt completion <shell>` | Shell integration and completion |
+
+Pass `--repos` or `--bundles` with no value to choose interactively. The
+same picker opens for `wt cd` and `wt open` without an argument.
+
+### Workspaces and branches
+
+`--repos` takes `repo` or `repo@branch`, comma-separated:
 
 ```bash
-make install PREFIX=/some/other/path
+wt ws DOM-12345 --repos domino                    # branch DOM-12345
+wt ws DOM-12345 --repos domino@main,cws@dev,web   # explicit branches
+wt ws DOM-12345 --repos web --from release-2.4    # new branches start from release-2.4
 ```
 
-## Usage
+A repository without `@branch` uses the workspace name as its branch. `wt`
+uses the first of these that applies:
 
-```
-wt clone <git-url>     Clone a repo into a bare-repo + worktrees layout
-wt <branch>            Create (or reuse) a worktree for <branch>
-wt <branch> --from <base-branch>
-                        Create <branch> as a new branch starting from
-                        <base-branch> instead of the default branch
-wt remove <branch>     Remove a worktree and its local branch
-wt cleanup             Remove every worktree except primary, then update
-wt update              Fetch all remotes, fast-forward primary, and list worktrees
-wt workspace <name> --repos <r1,r2,...> [--repo-base <dir>]
-                        Create (or update) a multi-repo workspace
-wt workspace remove <name> [--repo-base <dir>]
-                        Remove every worktree in a workspace, then the
-                        workspace directory itself
-wt help                Show this help
+1. An existing local branch.
+2. `origin/<branch>`, checked out as a tracking branch.
+3. A new branch from `origin/<default>` (or `--from`). It has no upstream
+   until the first `git push`, which sets one up automatically
+   (`push.autoSetupRemote`).
+
+Notes:
+
+- **Checks before changes.** Every repository is checked before anything is
+  created. If any repository has a problem, nothing is created and all
+  problems are reported together. If a worktree fails mid-way, everything
+  created by that run is rolled back.
+- **Re-running adds repositories.** Running `wt ws` again on an existing
+  workspace adds the new repositories and leaves the existing ones alone.
+- **One worktree per branch.** Git allows a branch to be checked out in only
+  one worktree, so two workspaces can't use the same branch of the same
+  repository. Use `--fetch` to fetch before resolving branches; otherwise
+  `wt ws` works from the refs of the last `wt sync`.
+- **No metadata file.** A workspace's repositories are read from the
+  worktrees it contains.
+
+### Bundles
+
+When a workspace combines bundles and `--repos`:
+
+- **Repositories:** it gets every repository from every bundle and from
+  `--repos`.
+- **Branch from `--repos`:** an explicit `--repos repo@branch` overrides the
+  bundles.
+- **Bundles that disagree:** if two bundles pin different branches for the
+  same repository, the first bundle listed wins.
+
+`wt` prints a note every time it resolves one of these conflicts.
+
+### Safety
+
+- Nothing is forced. A worktree with uncommitted or untracked changes is
+  never removed.
+- A local branch is deleted only when its commits are safe elsewhere: merged
+  into `origin/<default>` (regular, rebase or squash merge) or pushed to
+  `origin/<branch>`.
+- Remote branches are deleted only by `wt ws remove`, and only after you
+  confirm (or pass `--delete-remote`). `wt cleanup` never deletes them.
+- `wt sync` moves a primary checkout only when it is clean, detached, and
+  contains no commits of its own.
+
+### Cleanup
+
+`wt cleanup` fetches the repositories in use and puts each workspace in one
+of these groups:
+
+- merged (safe to remove)
+- pushed, not merged yet
+- contains unpushed commits
+- uncommitted changes
+- no commits yet
+- empty
+
+Merged workspaces are preselected in a checklist. Options:
+
+- `--dry-run`: only show the groups.
+- `--yes`: remove the merged workspaces without asking.
+- `--no-fetch`: skip the fetch.
+
+## Configuration
+
+`~/.wt/settings.toml` (set `WT_HOME` to use another directory). Every key is
+optional:
+
+```toml
+[paths]
+repos = "~/.repos"
+workspaces = "~/workspaces"
+
+[editor]
+command = "code"            # default: $EDITOR, then code. Aliases don't work; e.g. "open -a 'Visual Studio Code'"
+
+[integrations.codegraph]
+enabled = false
+
+[integrations.harness.claude]
+enabled = true
+template = "claude"         # ~/.wt/templates/claude.md overrides the built-in template
+
+[integrations.harness.generic]
+enabled = false
+template = "agents"         # writes AGENTS.md
+
+[bundles.backend]
+repos = ["domino", "compute-workload-service@main"]
 ```
 
-### Example
+`wt bundle` and `wt integrations` rewrite this file, which drops any
+comments in it.
+
+## Integrations
+
+Integrations run after a workspace is created or its repositories change.
+If one fails, `wt` prints a warning and the workspace is still ready.
+
+- **codegraph** indexes the whole workspace as one project. The first run
+  uses `codegraph init`; later runs use `codegraph sync`. It needs
+  [CodeGraph](https://github.com/colbymchenry/codegraph) on `PATH`.
+- **harness** writes an instruction file for AI agents at the workspace
+  root:
+  - `claude` writes `CLAUDE.md`; `generic` writes `AGENTS.md`.
+  - Custom harnesses need a file name:
+    `wt integrations harness cursor --file RULES.md --template agents`.
+  - Templates are Go `text/template` files that can use `.Name`, `.Path`,
+    `.Repos` (each with `.Name`, `.Branch` and `.Path`) and `.Codegraph`.
+
+Generated files start with a marker line. Delete that line to keep your
+edits: `wt` then never overwrites or deletes the file. Removing a workspace
+deletes the generated files and `.codegraph/`.
+
+## Development
 
 ```bash
-wt clone git@github.com:user/repo.git
-cd repo/primary
-
-wt feature/login        # creates repo/feature/login, new branch off the default branch
-cd ../feature/login
-
-wt bugfix-123           # another branch, another worktree, side by side
-cd ../bugfix-123
-
-wt hotfix --from release-2.4  # new branch off release-2.4 instead of the default branch
-cd ../hotfix
-
-wt remove feature/login # removes the worktree and local branch (with a prompt for the remote)
-
-wt cleanup               # removes every safe-to-remove worktree except primary, then updates
-
-wt update               # fetch --all --prune, fast-forward primary, list branches and worktrees
+make test     # unit and integration tests (real git in temp dirs)
+make vet
+make build    # bin/wt
 ```
 
-### Layout created by `wt clone`
+Code layout:
 
-```
-repo/
-├── .bare/       # the real bare repo (don't touch)
-├── .git         # points to .bare
-├── primary/     # permanent worktree, checked out on the default branch
-└── <branch>/    # one worktree per branch created via `wt <branch>`
-```
-
-`primary` is treated as permanent: `wt remove` refuses to touch it.
-
-You can run `wt <branch>` and `wt remove <branch>` from anywhere inside
-the repo (the bare root or any worktree) — the script always resolves
-the actual repo root.
-
-By default, a brand-new branch is created off the repo's default branch
-(`origin/<default>`). Pass `--from <base-branch>` to branch off something
-else instead — a release branch, another feature branch, anything that
-exists locally or on `origin`:
-
-```bash
-wt hotfix --from release-2.4     # release-2.4 exists on origin
-wt follow-up --from feature/foo  # feature/foo is only local so far
-```
-
-`--from` only matters when `<branch>` doesn't exist yet. If `<branch>`
-already has a worktree-able local or remote branch, `wt` reuses it as
-usual and prints a warning that `--from` was ignored. If the base branch
-itself doesn't exist anywhere, `wt` fails with an error instead of
-creating the worktree.
-
-`wt update` also fast-forwards `primary` to its upstream — but only when
-`primary` has no local changes and can be fast-forwarded cleanly. If it
-has uncommitted changes or has diverged (e.g. you committed directly on
-`primary`), `wt update` warns and leaves it untouched instead of risking
-your work; update it yourself with `git pull` in that case.
-
-`wt cleanup` sweeps every worktree except `primary` and removes whatever
-it safely can, then runs the same update as `wt update`. For each
-worktree it tries `git worktree remove` (no `--force`) and `git branch
--d` (no `-D`):
-
-- A worktree with uncommitted changes (or that's locked) is skipped
-  entirely and reported — nothing is touched.
-- A worktree whose branch is fully merged is removed along with its
-  local branch.
-- A worktree whose branch isn't fully merged still has its worktree
-  removed, but the local branch is kept around (retrievable later with
-  `wt <branch>`).
-
-`wt cleanup` never touches remote branches — use `wt remove <branch>`
-for that, one branch at a time. It also never touches worktrees that
-belong to a workspace (see below) — those are only removed with
-`wt workspace remove <name>`.
-
-## Workspaces
-
-A ticket that spans several repos normally means creating a same-named
-worktree in each repo separately — which makes it awkward to open all
-of them in one editor window (for a combined GitLens view, say) or to
-build a single cross-repo view of the code.
-
-`wt workspace` groups them instead: one worktree per repo, all nested
-under a single folder, all on the same branch — `<name>` is both the
-workspace folder name and the branch name, since in practice they're
-the same thing (the ticket).
-
-```bash
-wt workspace DOM-1784 --repos api,worker,frontend
-```
-
-This creates:
-
-```
-~/workspaces/DOM-1784/
-├── .wt-workspace        # metadata read back by 'wt workspace remove'
-├── api/                 # worktree on branch DOM-1784
-├── worker/              # worktree on branch DOM-1784
-└── frontend/            # worktree on branch DOM-1784
-```
-
-- `--repos` is a comma-separated list of repos that already use the
-  `wt` bare-repo + worktrees layout under `--repo-base` (i.e. each one
-  has `<repo-base>/<repo>/.bare`).
-- `--repo-base` is where the repos themselves live and defaults to
-  `~/repos` if omitted. The `workspaces` folder is created as a
-  **sibling** of `--repo-base`, not nested inside it — with the default
-  `--repo-base`, that's `~/workspaces` (since `~/repos` and
-  `~/workspaces` both live directly under `~`).
-- `<name>` becomes the branch name in every repo, exactly like the
-  `<branch>` argument to plain `wt <branch>` (existing local branch,
-  existing remote branch, or a new branch off the default branch, in
-  that order). Since it's also a path segment, unlike a plain `<branch>`
-  it can't contain `/`.
-- Every repo is validated up front. If one is missing or invalid,
-  nothing is created; if a worktree can't be created partway through
-  (e.g. the branch is already checked out elsewhere in one repo), any
-  worktree already created earlier in that same run is rolled back.
-- Re-running the same command later (e.g. after adding a repo to
-  `--repos`) reuses worktrees that already exist and only creates the
-  ones that are missing.
-
-Open `~/workspaces/DOM-1784` as a single folder in your editor to
-see and diff all three repos together.
-
-`wt workspace remove <name> [--repo-base <dir>]` removes every worktree in
-the workspace (and its local branch, same rules as `wt remove`), then
-the workspace directory itself. It asks once whether to also delete the
-matching branch on `origin` for every repo, instead of prompting repo
-by repo.
-
-### Optional: cross-repo code graph with CodeGraph
-
-If [CodeGraph](https://github.com/colbymchenry/codegraph) is installed
-and `WT_CODEGRAPH=true` is set in your shell, `wt workspace` also indexes
-the whole workspace as one project: `codegraph init` the first time,
-`codegraph index --force` on later re-runs (e.g. after a repo was
-added). This gives you a knowledge graph that spans all the repos in
-the workspace, not just one at a time.
-
-If `WT_CODEGRAPH` is unset or not `"true"`, `wt workspace` never invokes
-`codegraph` at all.
-
-To set it up once:
-
-```bash
-# follow the install instructions at https://github.com/colbymchenry/codegraph
-codegraph telemetry off
-
-# in your ~/.zshrc / ~/.bashrc
-export WT_CODEGRAPH=true
-```
-
-After that, every `wt workspace` call keeps the graph up to date on its
-own — no extra step needed.
-
-## Why this approach?
-
-The typical single-checkout workflow forces you to choose between:
-
-- Constantly switching branches, losing working-directory state
-  (running processes, branch-specific `node_modules`, untracked files)
-  every time you hop between tasks.
-- Constantly `git stash`-ing so you can switch branches without losing
-  changes, with the risk of forgetting a stash or applying the wrong one.
-- Cloning the same repo multiple times into separate folders, duplicating
-  the whole history and `.git` on disk for every copy.
-
-With bare repo + worktrees:
-
-- **Each branch has its own folder**, with its own working directory.
-  You can have several branches active at the same time — each with its
-  own running server, its own installed dependencies, its own uncommitted
-  files — without them stepping on each other.
-- **A single git history on disk** (`.bare`), shared by every worktree.
-  No duplicated `.git` per branch like you'd get from cloning the repo
-  multiple times.
-- **Switching tasks is a `cd`**, not a `checkout`. No stashing, no
-  waiting for git to rewrite the working directory, no risk of dragging
-  changes from one branch into another by mistake.
-- **Less friction for working in parallel**: reviewing a PR, continuing
-  your feature, and testing a hotfix can all coexist as three folders at
-  the same time.
-
-The only cost is understanding the layout (`.bare`, `primary`, and one
-folder per branch) — `wt` exists precisely so you don't have to manage
-that layout by hand with raw `git worktree` commands.
-
-## Using with Claude Code
-
-If you keep multiple repos side by side in one parent folder (some using
-the `wt` layout, some not) and want Claude Code to manage worktrees for
-you automatically, drop a `CLAUDE.md` in that parent folder. Claude Code
-reads `CLAUDE.md` files while walking up from the current directory, so
-one placed there is picked up no matter which repo or worktree you open
-a session in.
-
-```markdown
-# Repos in this folder using the `wt` layout
-
-Some repos here use the `wt` bare-repo + worktrees layout, others are
-plain clones. `wt` is installed and on PATH.
-
-A repo uses the `wt` layout if `<repo>/.bare` exists. In that case:
-- `<repo>/primary` is the permanent worktree on the default branch.
-- `<repo>/<branch>` is a worktree created with `wt <branch>`.
-- Never edit anything inside `<repo>/.bare` directly.
-
-When asked to work on repo(s) X, Y, Z (optionally with a branch name),
-for each one:
-1. Check whether `<repo>/.bare` exists.
-2. If it does, run `wt <branch>` with cwd anywhere inside `<repo>`
-   (the repo root works, no need to `cd` into `primary` first), then do
-   the actual work inside `<repo>/<branch>` — not in `primary`.
-3. If it doesn't, work directly in `<repo>` with a normal `git checkout`.
-4. If no branch name was given, pick one descriptive name and reuse it
-   across every affected repo, unless told otherwise.
-
-`wt remove <branch>` deletes a worktree and its local branch — don't run
-it on your own initiative, only when explicitly asked.
-```
-
-Adjust the repo list / paths to your own setup. This lets you say
-"we need to touch repo A and repo B for this feature" and have Claude
-create or reuse the right worktree in each one before it starts editing.
-
-## Credits
-
-The bare-repo + worktrees layout this script automates is based on the
-approach described in
-[Git Worktree, like a boss](https://dev.to/metal3d/git-worktree-like-a-boss-2j1b).
+- `internal/git`: thin git CLI wrapper.
+- `internal/repo`: repository index, clone and sync.
+- `internal/workspace`: plan/apply, remove and status.
+- `internal/integration`: the integrations.
+- `internal/doctor`: health checks.
+- `internal/cli`: cobra commands.
+- `internal/ui`: prompts built on charmbracelet/huh.
