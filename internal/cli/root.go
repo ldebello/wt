@@ -30,7 +30,9 @@ checkout, and builds workspaces (~/workspaces/<name>/) out of git worktrees.`,
 	}
 	root.SetOut(app.Out)
 	root.SetErr(app.Err)
-	root.AddCommand()
+	root.AddCommand(
+		newCloneCmd(app),
+	)
 	return root
 }
 

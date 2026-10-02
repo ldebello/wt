@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/ldebello/wt/internal/config"
+	"github.com/ldebello/wt/internal/repo"
 	"github.com/ldebello/wt/internal/ui"
 )
 
@@ -42,6 +43,16 @@ func (a *App) Config() (*config.Config, error) {
 // SaveConfig writes the current configuration back to settings.toml.
 func (a *App) SaveConfig() error {
 	return config.Save(a.Home, a.cfg)
+}
+
+// Index returns the repository index from the configured repos path.
+func (a *App) Index() (repo.Index, error) {
+	cfg, err := a.Config()
+	if err != nil {
+		return repo.Index{}, err
+	}
+	dir, err := cfg.ReposDir()
+	return repo.Index{Dir: dir}, err
 }
 
 func (a *App) printf(format string, args ...any) {
