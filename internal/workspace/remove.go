@@ -59,7 +59,7 @@ func (m Manager) RemoveMembers(ctx context.Context, members []Member, deleteRemo
 func (m Manager) removeMember(ctx context.Context, member Member, deleteRemote bool) RemoveResult {
 	res := RemoveResult{Repo: member.Repo, Branch: member.Branch}
 	if member.Broken || !m.Index.Exists(member.Repo) {
-		res.Skipped = "its repository is missing from the index (see 'wt doctor')"
+		res.Skipped = errMissingRepo.Error()
 		return res
 	}
 	bare := m.Index.BarePath(member.Repo)

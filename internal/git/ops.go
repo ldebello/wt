@@ -102,6 +102,12 @@ func ValidBranchName(ctx context.Context, name string) bool {
 	return OK(ctx, "", "check-ref-format", "--branch", name)
 }
 
+// HasUpstream reports whether branch has an upstream configured (set by
+// `git push -u`, push.autoSetupRemote or --track).
+func HasUpstream(ctx context.Context, dir, branch string) bool {
+	return OK(ctx, dir, "config", "--get", "branch."+branch+".merge")
+}
+
 // IsDirty reports whether the working tree at dir has uncommitted or
 // untracked changes.
 func IsDirty(ctx context.Context, dir string) (bool, error) {

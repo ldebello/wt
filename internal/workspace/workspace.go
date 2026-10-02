@@ -16,6 +16,8 @@ import (
 	"github.com/ldebello/wt/internal/repo"
 )
 
+var errMissingRepo = errors.New("its repository is missing from the index (see 'wt doctor')")
+
 // Workspace is a workspace directory and the repository worktrees in it.
 type Workspace struct {
 	Name    string

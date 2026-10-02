@@ -100,7 +100,9 @@ func Commit(t *testing.T, dir, branch, file, content string) string {
 		t.Fatal(err)
 	}
 	Git(t, work, "add", "--all")
-	Git(t, work, "commit", "-q", "-m", "update "+file)
+	// Include the branch so identical changes on two branches get distinct
+	// commits, as with real squash merges.
+	Git(t, work, "commit", "-q", "-m", "update "+file+" on "+branch)
 	return Git(t, work, "rev-parse", "HEAD")
 }
 

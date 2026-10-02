@@ -359,7 +359,14 @@ func removeWorkspace(ctx context.Context, app *App, name string, repos []string,
 			}
 		}
 	}
+	return performRemoval(ctx, app, mgr, ws, targets, partial, deleteRemote)
+}
 
+// performRemoval removes targets from ws, then either refreshes the
+// integrations (members remain after a partial removal) or cleans up
+// generated files and deletes the workspace directory.
+func performRemoval(ctx context.Context, app *App, mgr workspace.Manager, ws workspace.Workspace, targets []workspace.Member, partial, deleteRemote bool) error {
+	name := ws.Name
 	results := mgr.RemoveMembers(ctx, targets, deleteRemote)
 	tw := tabwriter.NewWriter(app.Out, 0, 4, 2, ' ', 0)
 	for _, r := range results {
@@ -367,7 +374,7 @@ func removeWorkspace(ctx context.Context, app *App, name string, repos []string,
 	}
 	tw.Flush()
 
-	ws, err = mgr.Load(name)
+	ws, err := mgr.Load(name)
 	if err != nil {
 		return err
 	}
