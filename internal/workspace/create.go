@@ -33,6 +33,16 @@ type Step struct {
 	Action Action
 	Start  string // start point for CreateBranch
 	Note   string // extra information (e.g. a requested branch was ignored)
+	// For CheckoutLocal with an origin/<branch>: commits only on the local
+	// branch (Ahead) and only on origin (Behind). A branch that is only
+	// behind is fast-forwarded before checkout.
+	Ahead, Behind int
+}
+
+// FastForward reports whether applying the step moves the local branch to
+// origin/<branch> first.
+func (s Step) FastForward() bool {
+	return s.Action == CheckoutLocal && s.Behind > 0 && s.Ahead == 0
 }
 
 // Describe returns a short human-readable description of the step.
@@ -43,6 +53,12 @@ func (s Step) Describe() string {
 		text = fmt.Sprintf("already present on %s, left untouched", branchOrDetached(s.Branch))
 	case CheckoutLocal:
 		text = "existing branch " + s.Branch
+		switch {
+		case s.FastForward():
+			text += fmt.Sprintf(", updated with %d new commits from origin/%s", s.Behind, s.Branch)
+		case s.Behind > 0:
+			text += fmt.Sprintf(" (diverged from origin/%s: %d local and %d remote commits, not updated; run git pull)", s.Branch, s.Ahead, s.Behind)
+		}
 	case TrackRemote:
 		text = fmt.Sprintf("branch %s tracking origin/%s", s.Branch, s.Branch)
 	case CreateBranch:
@@ -135,6 +151,16 @@ func (m Manager) planOne(ctx context.Context, ws Workspace, spec Spec, opts Opti
 	switch {
 	case git.LocalBranchExists(ctx, bare, step.Branch):
 		step.Action = CheckoutLocal
+		if git.RemoteBranchExists(ctx, bare, step.Branch) {
+			remote := "refs/remotes/origin/" + step.Branch
+			local := "refs/heads/" + step.Branch
+			if step.Ahead, err = git.CountCommits(ctx, bare, remote, local); err != nil {
+				return Step{}, err
+			}
+			if step.Behind, err = git.CountCommits(ctx, bare, local, remote); err != nil {
+				return Step{}, err
+			}
+		}
 	case git.RemoteBranchExists(ctx, bare, step.Branch):
 		step.Action = TrackRemote
 	default:
@@ -208,6 +234,22 @@ func (m Manager) addWorktree(ctx context.Context, s Step) error {
 	// block the branch.
 	if _, err := git.Run(ctx, bare, "worktree", "prune"); err != nil {
 		return err
+	}
+	if s.FastForward() {
+		// The branch is not checked out anywhere (checked by Plan), so move
+		// it directly; the old value guards against concurrent changes.
+		local, remote := "refs/heads/"+s.Branch, "refs/remotes/origin/"+s.Branch
+		oldSHA, err := git.Run(ctx, bare, "rev-parse", local)
+		if err != nil {
+			return fmt.Errorf("%s: %w", s.Repo, err)
+		}
+		newSHA, err := git.Run(ctx, bare, "rev-parse", remote)
+		if err != nil {
+			return fmt.Errorf("%s: %w", s.Repo, err)
+		}
+		if _, err := git.Run(ctx, bare, "update-ref", "-m", "wt: fast-forward to origin/"+s.Branch, local, newSHA, oldSHA); err != nil {
+			return fmt.Errorf("%s: %w", s.Repo, err)
+		}
 	}
 	args := []string{"worktree", "add", "-q"}
 	switch s.Action {

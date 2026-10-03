@@ -22,7 +22,7 @@ var reservedWorkspaceNames = []string{"list", "remove"}
 func newWorkspaceCmd(app *App) *cobra.Command {
 	var repos, bundles []string
 	var from string
-	var fetch bool
+	var noFetch bool
 	cmd := &cobra.Command{
 		Use:     "workspace <name>",
 		Aliases: []string{"ws"},
@@ -35,7 +35,13 @@ Without --repos or --bundles, pick bundles and repositories interactively.
 
 A repository without @branch uses the workspace name as branch: an existing
 local branch, else origin/<name>, else a new branch from origin/<default>
-(or --from).`,
+(or --from).
+
+Before resolving branches, wt asks origin for the latest version of the
+branches involved (one quick request per repository, in parallel) and
+fetches only what changed. An existing local branch that is behind
+origin/<branch> is fast-forwarded; one that has diverged is left as is.
+--no-fetch skips the network and uses the refs from the last 'wt sync'.`,
 		Example: `  wt ws DOM-12345                      # pick bundles and repositories
   wt ws DOM-12345 --repos domino,cws@main
   wt ws DOM-12345 --bundles backend --repos web@feature/foo --repos tools`,
@@ -50,7 +56,7 @@ local branch, else origin/<name>, else a new branch from origin/<default>
 				bundles: bundles,
 				pick:    !cmd.Flags().Changed("repos") && !cmd.Flags().Changed("bundles"),
 				opts:    workspace.Options{From: from},
-				fetch:   fetch,
+				noFetch: noFetch,
 			}
 			return createWorkspace(cmd.Context(), app, req)
 		},
@@ -58,7 +64,7 @@ local branch, else origin/<name>, else a new branch from origin/<default>
 	cmd.Flags().StringSliceVar(&repos, "repos", nil, "repositories to add: repo or repo@branch (comma-separated, repeatable)")
 	cmd.Flags().StringSliceVar(&bundles, "bundles", nil, "bundles to add (comma-separated, repeatable)")
 	cmd.Flags().StringVar(&from, "from", "", "base for newly created branches instead of the default branch")
-	cmd.Flags().BoolVar(&fetch, "fetch", false, "fetch the repositories before resolving branches")
+	cmd.Flags().BoolVar(&noFetch, "no-fetch", false, "don't check origin for newer branches (work offline)")
 	cmd.ValidArgsFunction = completeFirstArg(app.workspaceNames)
 	registerListCompletion(cmd, "repos", func([]string) []string { return app.repoNames() })
 	registerListCompletion(cmd, "bundles", func([]string) []string { return app.bundleNames() })
@@ -71,7 +77,7 @@ type createRequest struct {
 	repos, bundles []string
 	pick           bool // no --repos/--bundles: choose interactively
 	opts           workspace.Options
-	fetch          bool
+	noFetch        bool
 }
 
 func createWorkspace(ctx context.Context, app *App, req createRequest) error {
@@ -95,19 +101,8 @@ func createWorkspace(ctx context.Context, app *App, req createRequest) error {
 		return err
 	}
 
-	if req.fetch && len(specs) > 0 {
-		var names []string
-		for _, s := range specs {
-			if mgr.Index.Exists(s.Repo) {
-				names = append(names, s.Repo)
-			}
-		}
-		app.printf("Fetching %d repositories...\n", len(names))
-		for name, err := range mgr.Index.Fetch(ctx, names) {
-			if err != nil {
-				app.warnf("fetch %s: %v\n", name, err)
-			}
-		}
+	if !req.noFetch {
+		fetchBranches(ctx, app, mgr, req.name, specs, req.opts.From)
 	}
 
 	steps, err := mgr.Plan(ctx, req.name, specs, req.opts)
@@ -143,6 +138,45 @@ func createWorkspace(ctx context.Context, app *App, req createRequest) error {
 		return err
 	}
 	return runWorkspaceHooks(ctx, app, ws)
+}
+
+// fetchBranches refreshes, for every repository about to be added, the
+// branches that resolution depends on: the requested branch, the default
+// branch (base for new branches) and --from. Failures are warnings: wt then
+// works from the local refs.
+func fetchBranches(ctx context.Context, app *App, mgr workspace.Manager, wsName string, specs []workspace.Spec, from string) {
+	var current workspace.Workspace
+	if mgr.Exists(wsName) {
+		current, _ = mgr.Load(wsName)
+	}
+	branches := map[string][]string{}
+	var names []string
+	for _, s := range specs {
+		if _, in := current.Member(s.Repo); in || !mgr.Index.Exists(s.Repo) {
+			continue
+		}
+		branch := s.Branch
+		if branch == "" {
+			branch = wsName
+		}
+		list := []string{branch}
+		if def, err := mgr.Index.DefaultBranch(ctx, s.Repo); err == nil {
+			list = append(list, def)
+		}
+		if from != "" {
+			list = append(list, from)
+		}
+		branches[s.Repo] = list
+		names = append(names, s.Repo)
+	}
+	errs := repo.ForEach(names, func(name string) error {
+		return mgr.Index.FetchBranches(ctx, name, branches[name])
+	})
+	for _, name := range names {
+		if errs[name] != nil {
+			app.warnf("could not check origin for %s, using local refs: %v\n", name, errs[name])
+		}
+	}
 }
 
 // resolveSpecs merges --repos and --bundles into one list.

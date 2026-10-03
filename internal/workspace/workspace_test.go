@@ -323,3 +323,49 @@ func tryGit(dir string, args ...string) (string, error) {
 	out, err := osexec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 	return string(out), err
 }
+
+func TestCreateFastForwardsLocalBranchBehindOrigin(t *testing.T) {
+	f := newFixture(t, "app")
+	f.clone(t, "app")
+	ctx := context.Background()
+	bare := f.ix.BarePath("app")
+
+	// Work on feat, push it, then drop the worktree but keep the branch.
+	f.create(t, "W", []Spec{{"app", "feat"}}, Options{})
+	wt := filepath.Join(f.m.Path("W"), "app")
+	testutil.Commit(t, wt, "feat", "a.txt", "mine")
+	testutil.Git(t, wt, "push", "-q", "-u", "origin", "feat")
+	testutil.Git(t, bare, "worktree", "remove", wt)
+
+	// A teammate pushes to feat.
+	theirs := testutil.Commit(t, f.ups["app"], "feat", "b.txt", "theirs")
+	testutil.Git(t, bare, "fetch", "-q", "origin")
+
+	steps := f.create(t, "W", []Spec{{"app", "feat"}}, Options{})
+	if s := steps[0]; s.Action != CheckoutLocal || s.Behind != 1 || s.Ahead != 0 || !strings.Contains(s.Describe(), "updated with 1 new commits from origin/feat") {
+		t.Errorf("step = %+v (%s)", s, s.Describe())
+	}
+	if got := testutil.Git(t, wt, "rev-parse", "HEAD"); got != theirs {
+		t.Errorf("HEAD = %s; want %s", got, theirs)
+	}
+
+	// Diverged: local commit plus another remote commit -> left alone.
+	local := testutil.Commit(t, wt, "feat", "c.txt", "local only")
+	testutil.Commit(t, f.ups["app"], "feat", "d.txt", "remote only")
+	testutil.Git(t, bare, "fetch", "-q", "origin")
+	testutil.Git(t, bare, "worktree", "remove", wt)
+
+	steps, err := f.m.Plan(ctx, "W", []Spec{{"app", "feat"}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.m.Apply(ctx, "W", steps); err != nil {
+		t.Fatal(err)
+	}
+	if s := steps[0]; s.FastForward() || !strings.Contains(s.Describe(), "diverged from origin/feat: 1 local and 1 remote commits") {
+		t.Errorf("step = %+v (%s)", s, s.Describe())
+	}
+	if got := testutil.Git(t, wt, "rev-parse", "HEAD"); got != local {
+		t.Errorf("diverged branch moved: HEAD = %s", got)
+	}
+}

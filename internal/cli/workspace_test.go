@@ -143,3 +143,38 @@ func TestWorkspaceRepeatedRepos(t *testing.T) {
 		t.Errorf("list:\n%s", r.out)
 	}
 }
+
+func TestWorkspaceChecksOriginForNewerBranches(t *testing.T) {
+	env := testutil.Setup(t)
+	up := env.NewUpstream(t, "api", "main")
+	mustRun(t, env, nil, "clone", up)
+
+	// A teammate pushes DOM-1 after our clone/sync.
+	testutil.Commit(t, up, "DOM-1", "theirs.txt", "x")
+
+	r := mustRun(t, env, nil, "ws", "Offline", "--repos", "api@DOM-1", "--no-fetch")
+	if !strings.Contains(r.out, "new branch DOM-1 from origin/main") {
+		t.Errorf("--no-fetch should use stale refs:\n%s", r.out)
+	}
+	mustRun(t, env, nil, "ws", "remove", "Offline", "--yes")
+
+	r = mustRun(t, env, nil, "ws", "DOM-1", "--repos", "api")
+	if !strings.Contains(r.out, "branch DOM-1 tracking origin/DOM-1") {
+		t.Errorf("expected the pushed branch to be found:\n%s", r.out)
+	}
+	if _, err := os.Stat(wsPath(env, "DOM-1", "api", "theirs.txt")); err != nil {
+		t.Error("worktree does not have the teammate's commit")
+	}
+}
+
+func TestWorkspaceWorksWhenOriginIsUnreachable(t *testing.T) {
+	env := testutil.Setup(t)
+	up := env.NewUpstream(t, "api", "main")
+	mustRun(t, env, nil, "clone", up)
+	os.RemoveAll(up)
+
+	r := mustRun(t, env, nil, "ws", "W", "--repos", "api")
+	if !strings.Contains(r.err, "could not check origin for api, using local refs") || !strings.Contains(r.out, "new branch W from origin/main") {
+		t.Errorf("stdout:\n%s\nstderr:\n%s", r.out, r.err)
+	}
+}

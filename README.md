@@ -4,8 +4,9 @@
 
 Each repository is cloned once, as a bare repository. A workspace is a
 folder (usually named after a ticket) with one worktree per repository, all
-on the same branch. Creating a workspace never clones and never touches the
-network, so it takes about as long as checking out the files.
+on the same branch. Creating a workspace never clones: it only checks origin
+for the branches involved, so it takes about as long as checking out the
+files.
 
 ```
 ~/.repos/
@@ -97,6 +98,7 @@ wt ws DOM-12345                                   # pick bundles and repositorie
 wt ws DOM-12345 --repos domino                    # branch DOM-12345
 wt ws DOM-12345 --repos domino@main,cws@dev,web   # explicit branches
 wt ws DOM-12345 --repos web --from release-2.4    # new branches start from release-2.4
+wt ws DOM-12345 --repos domino --no-fetch         # offline: use the refs from the last sync
 ```
 
 A repository without `@branch` uses the workspace name as its branch. `wt`
@@ -116,10 +118,17 @@ Notes:
   created by that run is rolled back.
 - **Re-running adds repositories.** Running `wt ws` again on an existing
   workspace adds the new repositories and leaves the existing ones alone.
+- **Latest branches from origin.** Before resolving branches, `wt` asks
+  origin for the branches involved (the workspace branch, the default branch
+  and `--from`): one quick request per repository, in parallel, fetching
+  only what changed. A branch a teammate pushed after your last sync is
+  found and tracked. An existing local branch that is behind
+  `origin/<branch>` is fast-forwarded. One that has diverged is left as is,
+  with a note to `git pull`. If origin can't be reached, `wt` warns and uses
+  the local refs; `--no-fetch` skips the check.
 - **One worktree per branch.** Git allows a branch to be checked out in only
   one worktree, so two workspaces can't use the same branch of the same
-  repository. Use `--fetch` to fetch before resolving branches; otherwise
-  `wt ws` works from the refs of the last `wt sync`.
+  repository.
 - **No metadata file.** A workspace's repositories are read from the
   worktrees it contains.
 

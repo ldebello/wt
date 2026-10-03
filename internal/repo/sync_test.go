@@ -69,3 +69,36 @@ func TestSyncUpdatesPrimarySafely(t *testing.T) {
 		t.Errorf("msg = %q", msg)
 	}
 }
+
+func TestFetchBranches(t *testing.T) {
+	env := testutil.Setup(t)
+	ctx := context.Background()
+	up := env.NewUpstream(t, "app", "main")
+	ix := Index{Dir: filepath.Join(env.Home, ".repos")}
+	c, err := ix.Clone(ctx, up, "", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Pushed after the clone: the local refs don't know about them yet.
+	mainSHA := testutil.Commit(t, up, "main", "m.txt", "m")
+	xSHA := testutil.Commit(t, up, "X", "x.txt", "x")
+	testutil.Commit(t, up, "feature/X", "f.txt", "f") // matches "X" as a suffix
+
+	if err := ix.FetchBranches(ctx, "app", []string{"X", "main", "missing"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.Git(t, c.Bare, "rev-parse", "origin/X"); got != xSHA {
+		t.Errorf("origin/X = %s; want %s", got, xSHA)
+	}
+	if got := testutil.Git(t, c.Bare, "rev-parse", "origin/main"); got != mainSHA {
+		t.Errorf("origin/main = %s; want %s", got, mainSHA)
+	}
+	if testutil.Git(t, c.Bare, "for-each-ref", "refs/remotes/origin/feature") != "" {
+		t.Error("fetched a branch that was not asked for")
+	}
+	// Nothing changed: no error, nothing to fetch.
+	if err := ix.FetchBranches(ctx, "app", []string{"X"}); err != nil {
+		t.Fatal(err)
+	}
+}
