@@ -92,7 +92,7 @@ func createWorkspace(ctx context.Context, app *App, req createRequest) error {
 		return err
 	}
 	if req.pick {
-		if req.repos, req.bundles, err = pickWorkspaceContents(app, mgr, req.name); err != nil {
+		if req.repos, req.bundles, err = pickWorkspaceContents(ctx, app, mgr, req.name); err != nil {
 			return err
 		}
 	}
@@ -215,9 +215,10 @@ const (
 )
 
 // pickWorkspaceContents offers bundles and repositories in one list
-// (filterable by kind). Repositories already in the workspace are shown
-// selected and are left untouched whatever the answer.
-func pickWorkspaceContents(app *App, mgr workspace.Manager, wsName string) (repos, bundles []string, err error) {
+// (filterable by kind). ChoiceKey picks a specific branch for a repository.
+// Repositories already in the workspace are shown selected and are left
+// untouched whatever the answer.
+func pickWorkspaceContents(ctx context.Context, app *App, mgr workspace.Manager, wsName string) (repos, bundles []string, err error) {
 	cfg, err := app.Config()
 	if err != nil {
 		return nil, nil, err
@@ -243,8 +244,14 @@ func pickWorkspaceContents(app *App, mgr workspace.Manager, wsName string) (repo
 		})
 	}
 	for _, n := range names {
-		_, in := current.Member(n)
-		options = append(options, ui.Option{Label: n, Value: repoPrefix + n, Selected: in, Group: "repositories"})
+		o := ui.Option{Label: n, Value: repoPrefix + n, Group: "repositories"}
+		if m, in := current.Member(n); in {
+			o.Selected, o.Label = true, n+"  (in workspace on "+m.Branch+")"
+		} else {
+			o.ChoiceName = "branch"
+			o.Choices = branchChoices(ctx, mgr.Index, n, wsName, wsName+"  (workspace branch: existing, or new from the default branch)")
+		}
+		options = append(options, o)
 	}
 
 	title := "Add to workspace " + wsName
@@ -255,12 +262,12 @@ func pickWorkspaceContents(app *App, mgr workspace.Manager, wsName string) (repo
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, v := range picked {
-		if name, ok := strings.CutPrefix(v, bundlePrefix); ok {
+	for _, o := range picked {
+		if name, ok := strings.CutPrefix(o.Value, bundlePrefix); ok {
 			bundles = append(bundles, name)
-		} else if name, ok := strings.CutPrefix(v, repoPrefix); ok {
+		} else if name, ok := strings.CutPrefix(o.Value, repoPrefix); ok {
 			if _, in := current.Member(name); !in {
-				repos = append(repos, name)
+				repos = append(repos, workspace.Spec{Repo: name, Branch: o.Choice}.String())
 			}
 		}
 	}

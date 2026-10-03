@@ -68,6 +68,30 @@ func WorktreeForBranch(ctx context.Context, dir, branch string) (string, error) 
 	return "", nil
 }
 
+// Branches lists local and origin branch names, most recently committed
+// first, without duplicates (a local branch and its origin counterpart are
+// listed once).
+func Branches(ctx context.Context, dir string) ([]string, error) {
+	out, err := Run(ctx, dir, "for-each-ref", "--sort=-committerdate", "--format=%(refname)", "refs/heads", "refs/remotes/origin")
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var names []string
+	for _, ref := range strings.Split(out, "\n") {
+		name, ok := strings.CutPrefix(ref, "refs/heads/")
+		if !ok {
+			name, ok = strings.CutPrefix(ref, "refs/remotes/origin/")
+		}
+		if !ok || name == "HEAD" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names, nil
+}
+
 // RefExists reports whether a fully-qualified ref exists.
 func RefExists(ctx context.Context, dir, ref string) bool {
 	return OK(ctx, dir, "show-ref", "--verify", "--quiet", ref)

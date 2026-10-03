@@ -135,3 +135,23 @@ func TestWorktreeForBranchAndDirty(t *testing.T) {
 		t.Error("untracked file not reported dirty")
 	}
 }
+
+func TestBranches(t *testing.T) {
+	env := testutil.Setup(t)
+	up := env.NewUpstream(t, "app", "main")
+	testutil.Commit(t, up, "older", "o.txt", "o")
+	testutil.Git(t, up, "commit", "-q", "--allow-empty", "-m", "newer", "--date", "2030-01-01T00:00:00")
+	clone := filepath.Join(env.Root, "clone")
+	testutil.Git(t, "", "clone", "-q", up, clone)
+	testutil.Git(t, clone, "branch", "local-only", "origin/older")
+
+	got, err := Branches(context.Background(), clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// main (local + origin) once, no origin/HEAD.
+	joined := strings.Join(got, ",")
+	if strings.Count(joined, "main") != 1 || strings.Contains(joined, "HEAD") || !strings.Contains(joined, "local-only") || !strings.Contains(joined, "older") {
+		t.Errorf("Branches = %v", got)
+	}
+}

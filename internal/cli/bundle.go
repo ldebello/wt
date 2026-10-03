@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ldebello/wt/internal/config"
+	"github.com/ldebello/wt/internal/git"
 	"github.com/ldebello/wt/internal/repo"
 	"github.com/ldebello/wt/internal/ui"
 	"github.com/ldebello/wt/internal/workspace"
@@ -36,7 +38,7 @@ preselected). --repos takes comma-separated values and can be repeated.`,
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return saveBundle(app, args[0], repos, !cmd.Flags().Changed("repos"))
+			return saveBundle(cmd.Context(), app, args[0], repos, !cmd.Flags().Changed("repos"))
 		},
 	}
 	cmd.Flags().StringSliceVar(&repos, "repos", nil, "repositories in the bundle: repo or repo@branch (comma-separated, repeatable)")
@@ -46,7 +48,7 @@ preselected). --repos takes comma-separated values and can be repeated.`,
 	return cmd
 }
 
-func saveBundle(app *App, name string, items []string, pick bool) error {
+func saveBundle(ctx context.Context, app *App, name string, items []string, pick bool) error {
 	if err := repo.ValidName("bundle", name); err != nil {
 		return err
 	}
@@ -67,7 +69,7 @@ func saveBundle(app *App, name string, items []string, pick bool) error {
 		return err
 	}
 	if pick {
-		if specs, err = pickBundleRepos(app, ix, cfg.Bundles[name]); err != nil {
+		if specs, err = pickBundleRepos(ctx, app, ix, cfg.Bundles[name]); err != nil {
 			return err
 		}
 	}
@@ -105,8 +107,8 @@ func saveBundle(app *App, name string, items []string, pick bool) error {
 }
 
 // pickBundleRepos offers every indexed repository, preselecting the bundle's
-// current ones and keeping their pinned branches.
-func pickBundleRepos(app *App, ix repo.Index, current config.Bundle) ([]workspace.Spec, error) {
+// current ones with their pinned branches. ChoiceKey pins a branch.
+func pickBundleRepos(ctx context.Context, app *App, ix repo.Index, current config.Bundle) ([]workspace.Spec, error) {
 	names, err := ix.List()
 	if err != nil {
 		return nil, err
@@ -121,12 +123,12 @@ func pickBundleRepos(app *App, ix repo.Index, current config.Bundle) ([]workspac
 	}
 	options := make([]ui.Option, len(names))
 	for i, n := range names {
-		label := n
-		if s, ok := pinned[n]; ok {
-			label = s.String()
+		s, selected := pinned[n]
+		options[i] = ui.Option{
+			Label: n, Value: n, Selected: selected, Choice: s.Branch,
+			ChoiceName: "branch",
+			Choices:    branchChoices(ctx, ix, n, "", "not pinned (the workspace branch)"),
 		}
-		_, selected := pinned[n]
-		options[i] = ui.Option{Label: label, Value: n, Selected: selected}
 	}
 	picked, err := app.UI.MultiSelect("Repositories in bundle", options)
 	if errors.Is(err, ui.ErrNoTTY) {
@@ -136,13 +138,36 @@ func pickBundleRepos(app *App, ix repo.Index, current config.Bundle) ([]workspac
 		return nil, err
 	}
 	specs := make([]workspace.Spec, len(picked))
-	for i, n := range picked {
-		specs[i] = workspace.Spec{Repo: n}
-		if s, ok := pinned[n]; ok {
-			specs[i] = s
-		}
+	for i, o := range picked {
+		specs[i] = workspace.Spec{Repo: o.Value, Branch: o.Choice}
 	}
 	return specs, nil
+}
+
+// branchChoices lists the branches a repository can use, for the ChoiceKey
+// dropdown: first the default behaviour (autoLabel, value ""), then the
+// default branch, then every other branch, most recently committed first.
+// autoBranch, when set, is left out of the rest of the list since the first
+// entry already stands for it.
+func branchChoices(ctx context.Context, ix repo.Index, repoName, autoBranch, autoLabel string) func() ([]ui.Choice, error) {
+	return func() ([]ui.Choice, error) {
+		bare := ix.BarePath(repoName)
+		names, err := git.Branches(ctx, bare)
+		if err != nil {
+			return nil, err
+		}
+		choices := []ui.Choice{{Label: autoLabel, Value: ""}}
+		def, _ := git.DefaultBranch(ctx, bare)
+		if def != "" && def != autoBranch {
+			choices = append(choices, ui.Choice{Label: def + "  (default branch)", Value: def})
+		}
+		for _, n := range names {
+			if n != def && n != autoBranch {
+				choices = append(choices, ui.Choice{Label: n, Value: n})
+			}
+		}
+		return choices, nil
+	}
 }
 
 func newBundleListCmd(app *App) *cobra.Command {

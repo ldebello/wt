@@ -136,7 +136,8 @@ Fully merged workspaces are preselected. Removal is the same as
 
 			selected := safe
 			if !yes {
-				selected, err = app.UI.MultiSelect("Workspaces to remove", options)
+				picked, err := app.UI.MultiSelect("Workspaces to remove", options)
+				selected = ui.Values(picked)
 				if errors.Is(err, ui.ErrNoTTY) {
 					return errors.New("selection needs a terminal; pass --yes to remove the merged workspaces, or --dry-run")
 				}

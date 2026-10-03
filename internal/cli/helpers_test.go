@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ldebello/wt/internal/testutil"
@@ -10,6 +11,7 @@ import (
 )
 
 // fakeUI returns canned answers in order and records what was asked.
+// A multi-select answer "value=choice" selects value with that Choice.
 type fakeUI struct {
 	multi    [][]string
 	selects  []string
@@ -18,7 +20,7 @@ type fakeUI struct {
 	offered  [][]ui.Option
 }
 
-func (f *fakeUI) MultiSelect(title string, options []ui.Option) ([]string, error) {
+func (f *fakeUI) MultiSelect(title string, options []ui.Option) ([]ui.Option, error) {
 	f.asked = append(f.asked, title)
 	f.offered = append(f.offered, options)
 	if len(f.multi) == 0 {
@@ -26,7 +28,20 @@ func (f *fakeUI) MultiSelect(title string, options []ui.Option) ([]string, error
 	}
 	answer := f.multi[0]
 	f.multi = f.multi[1:]
-	return answer, nil
+	var picked []ui.Option
+	for _, a := range answer {
+		value, choice, _ := strings.Cut(a, "=")
+		for _, o := range options {
+			if o.Value == value {
+				o.Selected = true
+				if choice != "" {
+					o.Choice = choice
+				}
+				picked = append(picked, o)
+			}
+		}
+	}
+	return picked, nil
 }
 
 func (f *fakeUI) Select(title string, options []ui.Option) (string, error) {

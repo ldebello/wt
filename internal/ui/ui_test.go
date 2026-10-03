@@ -31,8 +31,8 @@ func TestGroupsAndVisible(t *testing.T) {
 	if got := values(Visible(options, groups, 2)); !reflect.DeepEqual(got, []string{"r1"}) {
 		t.Errorf("view repositories = %v", got)
 	}
-	if got := SelectedValues(options); !reflect.DeepEqual(got, []string{"r1", "ws2"}) {
-		t.Errorf("SelectedValues = %v", got)
+	if got := Values(SelectedOptions(options)); !reflect.DeepEqual(got, []string{"r1", "ws2"}) {
+		t.Errorf("SelectedOptions = %v", got)
 	}
 
 	// A single group needs no filtering.
@@ -41,11 +41,19 @@ func TestGroupsAndVisible(t *testing.T) {
 	}
 }
 
-func TestGroupHelp(t *testing.T) {
-	if got := groupHelp([]string{"workspace", "repository"}, 1); got != "ctrl+t: all / [workspace] / repository" {
-		t.Errorf("groupHelp = %q", got)
+func TestHelpAndLabels(t *testing.T) {
+	plain := []Option{{Value: "a"}}
+	if help(plain, nil, 0) != "" {
+		t.Error("expected no help without groups or choices")
 	}
-	if groupHelp(nil, 0) != "" {
-		t.Error("expected no help without groups")
+	withChoices := []Option{{Value: "a"}, {Value: "b", ChoiceName: "branch", Choices: func() ([]Choice, error) { return nil, nil }}}
+	if got := help(withChoices, []string{"workspace", "repository"}, 1); got != "ctrl+t: all / [workspace] / repository   ctrl+b: choose branch" {
+		t.Errorf("help = %q", got)
+	}
+	if got := (Option{Label: "api"}).DisplayLabel(); got != "api" {
+		t.Errorf("DisplayLabel = %q", got)
+	}
+	if got := (Option{Label: "api", Choice: "feature/x"}).DisplayLabel(); got != "api @ feature/x" {
+		t.Errorf("DisplayLabel = %q", got)
 	}
 }

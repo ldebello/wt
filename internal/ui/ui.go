@@ -20,22 +20,41 @@ var ErrNoTTY = errors.New("interactive selection needs a terminal")
 // ErrAborted is returned when the user cancels a prompt.
 var ErrAborted = errors.New("aborted")
 
-// GroupKey cycles the visible group in selects whose options have more than
-// one Group.
-const GroupKey = "ctrl+t"
+const (
+	// GroupKey cycles the visible group in lists whose options have more
+	// than one Group.
+	GroupKey = "ctrl+t"
+	// ChoiceKey opens the Choices dropdown of the highlighted option.
+	ChoiceKey = "ctrl+b"
+)
 
-// Option is a selectable item. Options with different Groups (e.g.
-// "workspace", "repository") can be filtered by group with GroupKey.
+// Option is a selectable item.
 type Option struct {
 	Label    string
 	Value    string
 	Selected bool
-	Group    string
+	// Group allows filtering by kind (e.g. "workspaces", "repositories")
+	// with GroupKey when a list mixes several groups.
+	Group string
+	// Choices, when set, lists alternatives for this option (e.g. its
+	// branches); ChoiceKey opens them in a dropdown. The first choice is the
+	// default. It is called lazily, only when the dropdown is opened.
+	Choices    func() ([]Choice, error)
+	ChoiceName string // what a choice is, for help text (e.g. "branch")
+	// Choice is the picked choice value ("" = the default).
+	Choice string
+}
+
+// Choice is one entry of an option's dropdown.
+type Choice struct {
+	Label string
+	Value string
 }
 
 // Prompter asks the user for input. Tests use a fake implementation.
 type Prompter interface {
-	MultiSelect(title string, options []Option) ([]string, error)
+	// MultiSelect returns the selected options, with any Choice made.
+	MultiSelect(title string, options []Option) ([]Option, error)
 	Select(title string, options []Option) (string, error)
 	Confirm(title string, def bool) (bool, error)
 }
@@ -44,19 +63,20 @@ type Prompter interface {
 // stdout is captured (e.g. `wt cd`) can still prompt.
 type Terminal struct{}
 
-func (Terminal) MultiSelect(title string, options []Option) ([]string, error) {
+func (Terminal) MultiSelect(title string, options []Option) ([]Option, error) {
 	options = slices.Clone(options)
 	groups := Groups(options)
-	for view := 0; ; view = (view + 1) % (len(groups) + 1) {
+	view := 0
+	for {
 		visible := Visible(options, groups, view)
 		var values []string
 		field := huh.NewMultiSelect[string]().
 			Title(title).
-			Description(groupHelp(groups, view)).
+			Description(help(options, groups, view)).
 			Options(huhOptions(visible)...).
 			Filterable(true).
 			Value(&values)
-		toggled, err := run(field)
+		key, hovered, err := run(field, field.Hovered)
 		if err != nil {
 			return nil, err
 		}
@@ -66,10 +86,48 @@ func (Terminal) MultiSelect(title string, options []Option) ([]string, error) {
 				options[i].Selected = slices.Contains(values, options[i].Value)
 			}
 		}
-		if !toggled {
-			return SelectedValues(options), nil
+		switch key {
+		case GroupKey:
+			view = (view + 1) % (len(groups) + 1)
+		case ChoiceKey:
+			if err := chooseFor(options, hovered); err != nil {
+				return nil, err
+			}
+		default:
+			return SelectedOptions(options), nil
 		}
 	}
+}
+
+// chooseFor opens the dropdown of the option with value hovered. Picking a
+// choice also selects the option.
+func chooseFor(options []Option, hovered string) error {
+	i := slices.IndexFunc(options, func(o Option) bool { return o.Value == hovered })
+	if i < 0 || options[i].Choices == nil {
+		return nil
+	}
+	choices, err := options[i].Choices()
+	if err != nil {
+		return err
+	}
+	items := make([]Option, len(choices))
+	for j, c := range choices {
+		items[j] = Option{Label: c.Label, Value: c.Value}
+	}
+	name := options[i].ChoiceName
+	if name == "" {
+		name = "option"
+	}
+	picked, err := Terminal{}.Select(strings.TrimSpace(options[i].Label)+": choose "+name, items)
+	if errors.Is(err, ErrAborted) {
+		return nil // Esc in the dropdown just goes back to the list
+	}
+	if err != nil {
+		return err
+	}
+	options[i].Choice = picked
+	options[i].Selected = true
+	return nil
 }
 
 func (Terminal) Select(title string, options []Option) (string, error) {
@@ -78,12 +136,12 @@ func (Terminal) Select(title string, options []Option) (string, error) {
 		var value string
 		field := huh.NewSelect[string]().
 			Title(title).
-			Description(groupHelp(groups, view)).
+			Description(help(options, groups, view)).
 			Options(huhOptions(Visible(options, groups, view))...).
 			Filtering(true).
 			Value(&value)
-		toggled, err := run(field)
-		if err != nil || !toggled {
+		key, _, err := run(field, nil)
+		if err != nil || key != GroupKey {
 			return value, err
 		}
 	}
@@ -92,7 +150,7 @@ func (Terminal) Select(title string, options []Option) (string, error) {
 func (Terminal) Confirm(title string, def bool) (bool, error) {
 	value := def
 	field := huh.NewConfirm().Title(title).Affirmative("Yes").Negative("No").Value(&value)
-	_, err := run(field)
+	_, _, err := run(field, nil)
 	return value, err
 }
 
@@ -125,74 +183,113 @@ func Visible(options []Option, groups []string, view int) []Option {
 	return out
 }
 
-// SelectedValues returns the values of the selected options, in order.
-func SelectedValues(options []Option) []string {
-	var out []string
+// SelectedOptions returns the selected options, in order.
+func SelectedOptions(options []Option) []Option {
+	var out []Option
 	for _, o := range options {
 		if o.Selected {
-			out = append(out, o.Value)
+			out = append(out, o)
 		}
 	}
 	return out
 }
 
-func groupHelp(groups []string, view int) string {
-	if len(groups) == 0 {
-		return ""
+// Values returns the values of options.
+func Values(options []Option) []string {
+	out := make([]string, len(options))
+	for i, o := range options {
+		out[i] = o.Value
 	}
-	labels := append([]string{"all"}, groups...)
-	for i, l := range labels {
-		if i == view {
-			labels[i] = "[" + l + "]"
+	return out
+}
+
+// DisplayLabel is the label shown in lists, including a non-default choice.
+func (o Option) DisplayLabel() string {
+	if o.Choice == "" {
+		return o.Label
+	}
+	return o.Label + " @ " + o.Choice
+}
+
+// help describes the extra keys available for options.
+func help(options []Option, groups []string, view int) string {
+	var parts []string
+	if len(groups) > 0 {
+		labels := append([]string{"all"}, groups...)
+		for i, l := range labels {
+			if i == view {
+				labels[i] = "[" + l + "]"
+			}
 		}
+		parts = append(parts, GroupKey+": "+strings.Join(labels, " / "))
 	}
-	return GroupKey + ": " + strings.Join(labels, " / ")
+	if i := slices.IndexFunc(options, func(o Option) bool { return o.Choices != nil }); i >= 0 {
+		name := options[i].ChoiceName
+		if name == "" {
+			name = "option"
+		}
+		parts = append(parts, ChoiceKey+": choose "+name)
+	}
+	return strings.Join(parts, "   ")
 }
 
 func huhOptions(options []Option) []huh.Option[string] {
 	out := make([]huh.Option[string], len(options))
 	for i, o := range options {
-		out[i] = huh.NewOption(o.Label, o.Value).Selected(o.Selected)
+		out[i] = huh.NewOption(o.DisplayLabel(), o.Value).Selected(o.Selected)
 	}
 	return out
 }
 
-// run shows a single-field form. It reports toggled=true when the user
-// pressed GroupKey, so the caller can show the next group.
-func run(field huh.Field) (toggled bool, err error) {
+// run shows a single-field form. It returns the extra key (GroupKey or
+// ChoiceKey) that ended it, if any, and the hovered value at that moment.
+func run(field huh.Field, hovered func() (string, bool)) (key, hoveredValue string, err error) {
 	if !IsTerminal() {
-		return false, ErrNoTTY
+		return "", "", ErrNoTTY
 	}
 	form := huh.NewForm(huh.NewGroup(field)).WithShowHelp(true)
 	form.SubmitCmd = tea.Quit
 	form.CancelCmd = tea.Interrupt
-	m := &groupToggle{form: form}
+	m := &keyCatcher{form: form, hovered: hovered}
 	_, err = tea.NewProgram(m, tea.WithOutput(os.Stderr)).Run()
 	if errors.Is(err, tea.ErrInterrupted) || form.State == huh.StateAborted {
-		return false, ErrAborted
+		return "", "", ErrAborted
 	}
-	return m.toggled, err
+	return m.key, m.hoveredValue, err
 }
 
-// groupToggle wraps a form to intercept GroupKey.
-type groupToggle struct {
-	form    *huh.Form
-	toggled bool
+// keyCatcher wraps a form to intercept GroupKey and ChoiceKey.
+type keyCatcher struct {
+	form         *huh.Form
+	hovered      func() (string, bool)
+	key          string
+	hoveredValue string
 }
 
-func (m *groupToggle) Init() tea.Cmd { return m.form.Init() }
+func (m *keyCatcher) Init() tea.Cmd { return m.form.Init() }
 
-func (m *groupToggle) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if k, ok := msg.(tea.KeyMsg); ok && k.String() == GroupKey {
-		m.toggled = true
-		return m, tea.Quit
+func (m *keyCatcher) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if k, ok := msg.(tea.KeyMsg); ok {
+		switch k.String() {
+		case GroupKey:
+			m.key = GroupKey
+			return m, tea.Quit
+		case ChoiceKey:
+			if m.hovered != nil {
+				if v, ok := m.hovered(); ok {
+					m.key, m.hoveredValue = ChoiceKey, v
+					return m, tea.Quit
+				}
+			}
+			return m, nil
+		}
 	}
 	_, cmd := m.form.Update(msg)
 	return m, cmd
 }
 
-func (m *groupToggle) View() string {
-	if m.toggled {
+func (m *keyCatcher) View() string {
+	if m.key != "" {
 		return ""
 	}
 	return m.form.View()

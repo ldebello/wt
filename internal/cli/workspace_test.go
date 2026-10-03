@@ -178,3 +178,40 @@ func TestWorkspaceWorksWhenOriginIsUnreachable(t *testing.T) {
 		t.Errorf("stdout:\n%s\nstderr:\n%s", r.out, r.err)
 	}
 }
+
+func TestWorkspacePickerBranchChoices(t *testing.T) {
+	env := testutil.Setup(t)
+	up := env.NewUpstream(t, "api", "main")
+	testutil.Commit(t, up, "feature/x", "x.txt", "x")
+	testutil.Commit(t, up, "W", "w.txt", "w") // same name as the workspace
+	mustRun(t, env, nil, "clone", up)
+	mustRun(t, env, nil, "clone", env.NewUpstream(t, "web", "main"))
+	mustRun(t, env, nil, "ws", "W", "--repos", "web")
+
+	fake := &fakeUI{multi: [][]string{{"repo:api=feature/x"}}}
+	r := mustRun(t, env, fake, "ws", "W")
+	if !strings.Contains(r.out, "branch feature/x tracking origin/feature/x") {
+		t.Errorf("output:\n%s", r.out)
+	}
+
+	opts := fake.offered[0] // api, web
+	if opts[1].Choices != nil || !strings.Contains(opts[1].Label, "in workspace on W") {
+		t.Errorf("existing member should not offer branches: %+v", opts[1])
+	}
+	choices, err := opts[0].Choices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values []string
+	for _, c := range choices {
+		values = append(values, c.Value)
+	}
+	// Default behaviour first, then the default branch, then the rest; the
+	// workspace branch is not repeated.
+	if len(values) != 3 || values[0] != "" || values[1] != "main" || values[2] != "feature/x" {
+		t.Errorf("choices = %+v", choices)
+	}
+	if !strings.Contains(choices[0].Label, "W  (workspace branch") || !strings.Contains(choices[1].Label, "(default branch)") {
+		t.Errorf("labels = %+v", choices)
+	}
+}

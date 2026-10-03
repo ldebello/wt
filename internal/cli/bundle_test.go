@@ -24,8 +24,14 @@ func TestBundleLifecycle(t *testing.T) {
 	if !strings.Contains(r.out, "Updated bundle backend: db@v1, web") {
 		t.Errorf("output:\n%s", r.out)
 	}
-	if opts := fake.offered[0]; !opts[0].Selected || opts[1].Label != "db@v1" || !opts[1].Selected || opts[2].Selected {
+	if opts := fake.offered[0]; !opts[0].Selected || opts[1].DisplayLabel() != "db @ v1" || !opts[1].Selected || opts[2].Selected {
 		t.Errorf("picker options: %+v", opts)
+	}
+
+	// A branch picked in the dropdown pins it.
+	r = mustRun(t, env, &fakeUI{multi: [][]string{{"db", "web=release"}}}, "bundle", "backend")
+	if !strings.Contains(r.out, "Updated bundle backend: db@v1, web@release") {
+		t.Errorf("output:\n%s", r.out)
 	}
 
 	mustRun(t, env, nil, "bundle", "remove", "frontend")

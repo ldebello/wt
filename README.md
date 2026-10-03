@@ -86,7 +86,11 @@ wt cleanup
 interactive picker, as do `wt cd` and `wt open` without an argument. When the
 list mixes kinds (bundles and repositories, or workspaces and repositories),
 press `ctrl+t` to cycle between showing all of them or only one kind;
-selections are kept while switching. `--repos` and `--bundles` always take a
+selections are kept while switching. In the workspace and bundle pickers,
+`ctrl+b` on a repository opens a dropdown of its branches (type to search).
+The first entry is the default (the workspace branch), then the default
+branch, then the rest, most recent first. The chosen branch is shown next to
+the repository (`domino @ feature/x`). `--repos` and `--bundles` always take a
 value: comma-separated, or repeat the flag (`--repos a --repos b@main`).
 
 ### Workspaces and branches
