@@ -109,7 +109,8 @@ func Load(wtHome string) (*Config, error) {
 }
 
 // Save writes cfg to settings.toml atomically. Comments in an existing file
-// are not preserved.
+// are not preserved. A symlinked settings.toml (e.g. from a dotfiles repo)
+// is written through, and the file keeps its permissions.
 func Save(wtHome string, cfg *Config) error {
 	var buf bytes.Buffer
 	buf.WriteString("# wt settings. Managed by wt: comments are not preserved when wt saves this file.\n\n")
@@ -119,7 +120,15 @@ func Save(wtHome string, cfg *Config) error {
 	if err := os.MkdirAll(wtHome, 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(wtHome, "settings-*.toml")
+	path := File(wtHome)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "settings-*.toml")
 	if err != nil {
 		return err
 	}
@@ -128,10 +137,14 @@ func Save(wtHome string, cfg *Config) error {
 		tmp.Close()
 		return err
 	}
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), File(wtHome))
+	return os.Rename(tmp.Name(), path)
 }
 
 // ReposDir is the expanded repository index directory.

@@ -333,15 +333,13 @@ func TestRemoveMembers(t *testing.T) {
 	if r := byRepo["merged"]; !r.Removed || !r.BranchDeleted {
 		t.Errorf("merged: %+v", r)
 	}
-	// pushed: origin/W is deleted, so the local branch is the only copy left.
-	if r := byRepo["pushed"]; !r.Removed || r.BranchDeleted || !r.RemoteDeleted || !strings.Contains(r.BranchKept, "is being deleted") {
+	// pushed but not merged: origin/W is an open pull request, so it is kept
+	// even with deleteRemote, and the local branch can go since origin has it.
+	if r := byRepo["pushed"]; !r.Removed || !r.BranchDeleted || r.RemoteDeleted || r.RemoteError == nil || !strings.Contains(r.RemoteError.Error(), "not merged") {
 		t.Errorf("pushed: %+v", r)
 	}
-	if testutil.Git(t, f.ups["pushed"], "branch", "--list", "W") != "" {
-		t.Error("origin branch not deleted")
-	}
-	if testutil.Git(t, f.ix.BarePath("pushed"), "branch", "--list", "W") == "" {
-		t.Error("branch whose only other copy was deleted on origin was deleted locally")
+	if testutil.Git(t, f.ups["pushed"], "branch", "--list", "W") == "" {
+		t.Error("unmerged origin branch was deleted")
 	}
 	if r := byRepo["local"]; !r.Removed || r.BranchDeleted || !strings.Contains(r.BranchKept, "not pushed or merged") {
 		t.Errorf("local: %+v", r)
@@ -431,5 +429,65 @@ func TestRemoveKeepsDetachedCommits(t *testing.T) {
 	loaded, _ = f.m.Load("W")
 	if r := f.m.RemoveMembers(context.Background(), loaded.Members, false)[0]; !r.Removed {
 		t.Errorf("detached on a branch commit: %+v", r)
+	}
+}
+
+func TestRemoveDoesNotTrustStaleOriginRefs(t *testing.T) {
+	f := newFixture(t, "app")
+	f.clone(t, "app")
+	f.create(t, "W", []Spec{{Repo: "app"}})
+	wt := filepath.Join(f.m.Path("W"), "app")
+	testutil.Commit(t, wt, "W", "a.txt", "work")
+	testutil.Git(t, wt, "push", "-q", "-u", "origin", "W")
+	// The pull request is closed and the branch deleted on origin, but the
+	// local origin/W is still there.
+	testutil.Git(t, f.ups["app"], "branch", "-q", "-D", "W")
+
+	loaded, _ := f.m.Load("W")
+	r := f.m.RemoveMembers(context.Background(), loaded.Members, false)[0]
+	if !r.Removed || r.BranchDeleted || !strings.Contains(r.BranchKept, "not pushed or merged") {
+		t.Errorf("result = %+v", r)
+	}
+	if testutil.Git(t, f.ix.BarePath("app"), "branch", "--list", "W") == "" {
+		t.Error("branch whose origin copy is gone was deleted")
+	}
+}
+
+func TestBaseBranchesAreJudgedAgainstTheirBase(t *testing.T) {
+	f := newFixture(t, "app")
+	testutil.Commit(t, f.ups["app"], "release", "r.txt", "release only")
+	f.clone(t, "app")
+	ctx := context.Background()
+
+	f.create(t, "HOTFIX", []Spec{{Repo: "app", Base: "release"}})
+	if got := testutil.Git(t, f.ix.BarePath("app"), "config", "--get", "branch.HOTFIX.wtBase"); got != "release" {
+		t.Errorf("recorded base = %q", got)
+	}
+	summary := func() string {
+		ws, _ := f.m.Load("HOTFIX")
+		label, _ := f.m.Status(ctx, ws).Summary()
+		return label
+	}
+	// Fresh from release: nothing of its own, even though release has commits
+	// that main lacks.
+	if got := summary(); got != "no commits yet" {
+		t.Errorf("fresh: %q", got)
+	}
+
+	// Fix pushed and squash-merged into release (not main): merged.
+	wt := filepath.Join(f.m.Path("HOTFIX"), "app")
+	testutil.Commit(t, wt, "HOTFIX", "fix.txt", "fix")
+	testutil.Git(t, wt, "push", "-q", "-u", "origin", "HOTFIX")
+	testutil.Commit(t, f.ups["app"], "release", "fix.txt", "fix")
+	testutil.Git(t, f.ix.BarePath("app"), "fetch", "-q", "origin")
+	if got := summary(); got != "merged (safe to remove)" {
+		t.Errorf("merged into release: %q", got)
+	}
+
+	// Removal deletes the local branch and, being merged, origin/HOTFIX too.
+	ws, _ := f.m.Load("HOTFIX")
+	r := f.m.RemoveMembers(ctx, ws.Members, true)[0]
+	if !r.BranchDeleted || !r.RemoteDeleted {
+		t.Errorf("remove = %+v", r)
 	}
 }

@@ -55,7 +55,6 @@ left alone. Workspace worktrees are never touched.`,
 				mu.Unlock()
 				return err
 			})
-			sort.Strings(names)
 			tw := tabwriter.NewWriter(app.Out, 0, 4, 2, ' ', 0)
 			failed := 0
 			for _, n := range names {
@@ -85,9 +84,10 @@ func newCleanupCmd(app *App) *cobra.Command {
 		Use:   "cleanup",
 		Short: "Find merged workspaces and remove the ones you select",
 		Long: `Fetch the repositories used by workspaces, classify every workspace against
-origin/<default> (squash merges included), and remove the ones you select.
-Fully merged workspaces are preselected. Removal is the same as
-'wt ws remove': nothing is forced and remote branches are never deleted.`,
+its base (repo:base) or origin/<default>, squash merges included, and remove
+the ones you select. Fully merged workspaces are preselected. Removal is the
+same as 'wt ws remove': nothing is forced and remote branches are never
+deleted.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()

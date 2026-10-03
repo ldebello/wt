@@ -101,4 +101,18 @@ func TestFetchBranches(t *testing.T) {
 	if err := ix.FetchBranches(ctx, "app", []string{"X"}); err != nil {
 		t.Fatal(err)
 	}
+
+	// Deleted on origin: the stale origin/X is forgotten, origin/HEAD's
+	// target is kept.
+	testutil.Git(t, up, "branch", "-D", "X")
+	testutil.Git(t, up, "branch", "-m", "main", "trunk")
+	if err := ix.FetchBranches(ctx, "app", []string{"X", "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if testutil.Git(t, c.Bare, "for-each-ref", "refs/remotes/origin/X") != "" {
+		t.Error("stale origin/X kept")
+	}
+	if testutil.Git(t, c.Bare, "for-each-ref", "refs/remotes/origin/main") == "" {
+		t.Error("origin/main (origin/HEAD) removed")
+	}
 }

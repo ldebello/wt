@@ -24,6 +24,10 @@ func resolveTarget(app *App, arg string) (string, error) {
 	if arg == "" {
 		return pickTarget(app)
 	}
+	// "<workspace>/" (as offered by completion) is the workspace itself.
+	if arg = strings.TrimRight(arg, "/"); arg == "" {
+		return "", errors.New("no workspace or repository named \"/\"")
+	}
 	if wsName, repoName, ok := strings.Cut(arg, "/"); ok {
 		ws, err := mgr.Load(wsName)
 		if err != nil {

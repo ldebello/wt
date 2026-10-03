@@ -22,7 +22,11 @@ func (ix Index) Sync(ctx context.Context, name string) (string, error) {
 	if _, err := git.Run(ctx, bare, "worktree", "prune"); err != nil {
 		return "", err
 	}
-	return ix.updatePrimary(ctx, name)
+	def, err := git.DefaultBranch(ctx, bare)
+	if err != nil {
+		return "", err
+	}
+	return ix.updatePrimary(ctx, name, def)
 }
 
 // RefreshPrimary brings the primary checkout of name up to date cheaply: it
@@ -36,17 +40,13 @@ func (ix Index) RefreshPrimary(ctx context.Context, name string) (string, error)
 	if err := ix.FetchBranches(ctx, name, []string{def}); err != nil {
 		return "", err
 	}
-	return ix.updatePrimary(ctx, name)
+	return ix.updatePrimary(ctx, name, def)
 }
 
-func (ix Index) updatePrimary(ctx context.Context, name string) (string, error) {
+func (ix Index) updatePrimary(ctx context.Context, name, def string) (string, error) {
 	primary := ix.PrimaryPath(name)
 	if _, err := os.Stat(primary); err != nil {
 		return "primary checkout missing (run 'wt doctor --fix')", nil
-	}
-	def, err := git.DefaultBranch(ctx, ix.BarePath(name))
-	if err != nil {
-		return "", err
 	}
 	target := "origin/" + def
 	if dirty, err := git.IsDirty(ctx, primary); err != nil {

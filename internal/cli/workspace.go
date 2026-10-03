@@ -358,10 +358,13 @@ func newWorkspaceRemoveCmd(app *App) *cobra.Command {
 		Aliases: []string{"rm"},
 		Short:   "Remove a workspace, or some of its repositories",
 		Long: `Remove the worktrees of a workspace (or only --repos) and then the workspace
-directory. Nothing is forced: worktrees with uncommitted changes are kept,
-and a local branch is deleted only if it is merged into origin/<default>
-(squash merges included) or pushed to origin. Remote branches are deleted
-only when confirmed (or with --delete-remote).`,
+directory. Nothing is forced: worktrees with uncommitted changes are kept.
+
+"Merged" means merged into the branch's base (repo:base) or the default
+branch, squash merges included; origin is checked first, so stale refs are
+never trusted. A local branch is deleted only if it is merged or pushed to
+origin. When confirmed (or with --delete-remote), merged branches are also
+deleted on origin; unmerged ones (open pull requests) are always kept.`,
 		Example: `  wt ws remove PROJ-123
   wt ws remove PROJ-123 --repos worker        # drop one repository`,
 		Args: cobra.ExactArgs(1),
@@ -402,7 +405,9 @@ func removeWorkspace(ctx context.Context, app *App, name string, repos []string,
 			if !ok {
 				return fmt.Errorf("repository %q is not in workspace %s", r, name)
 			}
-			targets = append(targets, m)
+			if !slices.Contains(targets, m) {
+				targets = append(targets, m)
+			}
 		}
 	}
 
@@ -426,7 +431,7 @@ func removeWorkspace(ctx context.Context, app *App, name string, repos []string,
 			return ui.ErrAborted
 		}
 		if !remoteSet && len(targets) > 0 {
-			if deleteRemote, err = app.UI.Confirm("Also delete the matching branches on origin?", false); err != nil {
+			if deleteRemote, err = app.UI.Confirm("Also delete the merged branches on origin?", false); err != nil {
 				return err
 			}
 		}

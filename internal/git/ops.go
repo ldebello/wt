@@ -132,6 +132,16 @@ func HasUpstream(ctx context.Context, dir, branch string) bool {
 	return OK(ctx, dir, "config", "--get", "branch."+branch+".merge")
 }
 
+// BaseConfig is the git config key under which wt records the base a
+// workspace branch was created from (repo:base), per branch.
+func BaseConfig(branch string) string { return "branch." + branch + ".wtBase" }
+
+// BranchBase returns the base recorded for branch, or "".
+func BranchBase(ctx context.Context, dir, branch string) string {
+	base, _ := Run(ctx, dir, "config", "--get", BaseConfig(branch))
+	return base
+}
+
 // IsDirty reports whether the working tree at dir has uncommitted or
 // untracked changes.
 func IsDirty(ctx context.Context, dir string) (bool, error) {

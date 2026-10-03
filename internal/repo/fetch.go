@@ -24,7 +24,8 @@ func (ix Index) Fetch(ctx context.Context, names []string) map[string]error {
 // FetchBranches refreshes refs/remotes/origin/<branch> for the given branches
 // of repository name. It asks origin which of them exist (one ls-remote) and
 // only fetches the ones that changed, so it is much cheaper than a full
-// fetch. Branches missing on origin are ignored.
+// fetch. A branch missing on origin loses its stale origin/<branch> (as
+// `fetch --prune` would), except the one origin/HEAD points to.
 func (ix Index) FetchBranches(ctx context.Context, name string, branches []string) error {
 	bare := ix.BarePath(name)
 	args := []string{"ls-remote", "--heads", "origin"}
@@ -37,6 +38,7 @@ func (ix Index) FetchBranches(ctx context.Context, name string, branches []strin
 	if err != nil {
 		return err
 	}
+	onOrigin := map[string]bool{}
 	var refspecs []string
 	for _, line := range strings.Split(out, "\n") {
 		sha, ref, ok := strings.Cut(line, "\t")
@@ -45,10 +47,23 @@ func (ix Index) FetchBranches(ctx context.Context, name string, branches []strin
 		if !ok || !isHead || !slices.Contains(branches, branch) {
 			continue
 		}
+		onOrigin[branch] = true
 		if current, _ := git.Run(ctx, bare, "rev-parse", "-q", "--verify", "refs/remotes/origin/"+branch); current == sha {
 			continue
 		}
 		refspecs = append(refspecs, "+refs/heads/"+branch+":refs/remotes/origin/"+branch)
+	}
+	// A stale origin/<branch> would be checked out or used as a base as if
+	// it still existed.
+	head, _ := git.Run(ctx, bare, "symbolic-ref", "-q", "refs/remotes/origin/HEAD")
+	for _, b := range branches {
+		ref := "refs/remotes/origin/" + b
+		if b == "" || onOrigin[b] || ref == head || !git.RefExists(ctx, bare, ref) {
+			continue
+		}
+		if _, err := git.Run(ctx, bare, "update-ref", "-d", ref); err != nil {
+			return err
+		}
 	}
 	if len(refspecs) == 0 {
 		return nil

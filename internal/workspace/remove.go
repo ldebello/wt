@@ -43,12 +43,17 @@ func (r RemoveResult) Describe() string {
 }
 
 // RemoveMembers removes the worktrees of the given members. It never forces:
-// a worktree with uncommitted or untracked changes is skipped. A local branch
-// is deleted only when its commits are safe elsewhere (merged into
-// origin/<default>, including squash merges, or pushed to an origin/<branch>
-// that is kept). When deleteRemote is set, origin/<branch> is deleted too
-// (never the default branch) if its commits are merged or in the local
-// branch. A detached worktree whose HEAD is on no branch is skipped.
+// a worktree with uncommitted or untracked changes is skipped, and so is a
+// detached worktree whose HEAD is on no branch.
+//
+// "Merged" means merged into the branch's base (repo:base) or the default
+// branch, squash merges included. Origin is checked first (one ls-remote per
+// repository) so stale remote-tracking refs are never trusted.
+//
+// A local branch is deleted only when it is merged, or pushed to an
+// origin/<branch> that is kept. With deleteRemote, origin/<branch> is
+// deleted only when it is merged, so open pull requests are never closed;
+// the default branch is never deleted.
 func (m Manager) RemoveMembers(ctx context.Context, members []Member, deleteRemote bool) []RemoveResult {
 	results := make([]RemoveResult, len(members))
 	for i, member := range members {
@@ -69,7 +74,8 @@ func (m Manager) removeMember(ctx context.Context, member Member, deleteRemote b
 		return res
 	}
 	if _, err := git.Run(ctx, bare, "worktree", "remove", member.Path); err != nil {
-		res.Skipped = "has uncommitted changes or is locked; inspect it with: git -C " + member.Path + " status"
+		reason, _, _ := strings.Cut(err.Error(), "\n")
+		res.Skipped = "has uncommitted changes or is locked; inspect it with: git -C " + member.Path + " status (" + reason + ")"
 		return res
 	}
 	res.Removed = true
@@ -91,26 +97,39 @@ func (m Manager) removeMember(ctx context.Context, member Member, deleteRemote b
 		return res
 	}
 
-	base := "origin/" + def
+	// Check origin first: a stale origin/<branch> must not count as a copy
+	// of the local branch. Without origin, only merges count.
+	recorded := git.BranchBase(ctx, bare, member.Branch)
+	originOK := m.Index.FetchBranches(ctx, member.Repo, []string{member.Branch, def, recorded}) == nil
+	base := baseRef(ctx, bare, member.Branch, def)
 	remote := "origin/" + member.Branch
-	hasRemote := git.RemoteBranchExists(ctx, bare, member.Branch)
-	// origin/<branch> may only be deleted when its commits are merged or
-	// kept in the local branch.
+	hasRemote := originOK && git.RemoteBranchExists(ctx, bare, member.Branch)
+	// Merged into its base, or into the default branch.
+	isMerged := func(ref string) bool {
+		merged, _ := git.Merged(ctx, bare, base, ref)
+		if !merged && base != "origin/"+def {
+			merged, _ = git.Merged(ctx, bare, "origin/"+def, ref)
+		}
+		return merged
+	}
+
+	// origin/<branch> is only deleted once merged, so open pull requests
+	// (yours or a teammate's) are never closed by accident.
 	removeRemote := false
-	if deleteRemote && hasRemote {
-		if merged, _ := git.Merged(ctx, bare, base, remote); merged || git.IsAncestor(ctx, bare, remote, member.Branch) {
+	if deleteRemote && git.RemoteBranchExists(ctx, bare, member.Branch) {
+		switch {
+		case !originOK:
+			res.RemoteError = fmt.Errorf("could not reach origin")
+		case isMerged(remote):
 			removeRemote = true
-		} else {
-			res.RemoteError = fmt.Errorf("it has commits not in the local branch or %s", base)
+		default:
+			res.RemoteError = fmt.Errorf("not merged into %s; delete it yourself if you mean to: git -C %s push origin --delete %s", base, bare, member.Branch)
 		}
 	}
 	// The local branch may only be deleted when its commits are merged, or
-	// pushed to an origin/<branch> that is not about to be deleted.
+	// pushed to an origin/<branch> that is kept.
 	pushed := hasRemote && !removeRemote && git.IsAncestor(ctx, bare, member.Branch, remote)
-	merged := false
-	if !pushed {
-		merged, _ = git.Merged(ctx, bare, base, member.Branch)
-	}
+	merged := !pushed && isMerged(member.Branch)
 	switch {
 	case merged || pushed:
 		if _, err := git.Run(ctx, bare, "branch", "-D", member.Branch); err != nil {
@@ -118,8 +137,8 @@ func (m Manager) removeMember(ctx context.Context, member Member, deleteRemote b
 		} else {
 			res.BranchDeleted = true
 		}
-	case removeRemote && git.IsAncestor(ctx, bare, member.Branch, remote):
-		res.BranchKept = "not merged into " + base + ", and " + remote + " is being deleted"
+	case !originOK:
+		res.BranchKept = "could not reach origin to check it was pushed"
 	default:
 		res.BranchKept = "has commits not pushed or merged into " + base
 	}

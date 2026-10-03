@@ -32,6 +32,7 @@ type Step struct {
 	Path   string
 	Action Action
 	Start  string // start point for CreateBranch
+	Base   string // the repo:base the new branch is created from, recorded for cleanup
 	Note   string // extra information (e.g. a requested branch was ignored)
 	// For CheckoutLocal with an origin/<branch>: commits only on the local
 	// branch (Ahead) and only on origin (Behind). A branch that is only
@@ -163,6 +164,7 @@ func (m Manager) planOne(ctx context.Context, ws Workspace, spec Spec) (Step, er
 		step.Note = ignoredBase(spec.Base, "it exists on origin")
 	default:
 		step.Action = CreateBranch
+		step.Base = spec.Base
 		if step.Start, err = m.startPoint(ctx, spec.Repo, spec.Base); err != nil {
 			return Step{}, err
 		}
@@ -276,12 +278,30 @@ func (m Manager) addWorktree(ctx context.Context, s Step) error {
 	if _, err := git.Run(ctx, bare, args...); err != nil {
 		return fmt.Errorf("%s: %w", s.Repo, err)
 	}
+	if s.Action == CreateBranch && s.Base != "" {
+		// Lets status and remove judge the branch against its base.
+		if _, err := git.Run(ctx, bare, "config", git.BaseConfig(s.Branch), s.Base); err != nil {
+			return fmt.Errorf("%s: %w", s.Repo, err)
+		}
+	}
 	return nil
+}
+
+// baseRef is what a workspace branch is compared with to decide whether it
+// is merged: origin/<base> for a branch created from repo:base (while that
+// branch exists on origin), else origin/<default>.
+func baseRef(ctx context.Context, bare, branch, def string) string {
+	if base := git.BranchBase(ctx, bare, branch); base != "" && git.RemoteBranchExists(ctx, bare, base) {
+		return "origin/" + base
+	}
+	return "origin/" + def
 }
 
 // rollback undoes a step. It only touches what the step created: the
 // worktree (fresh, so --force cannot lose work) and, for new branches, the
-// branch itself. A failed `git worktree add` cleans up its own directory.
+// branch itself, and only while it still points at its start (a branch that
+// appeared concurrently is left alone). A failed `git worktree add` cleans
+// up its own directory.
 func (m Manager) rollback(s Step, succeeded bool) {
 	ctx := context.Background()
 	bare := m.Index.BarePath(s.Repo)
@@ -289,9 +309,22 @@ func (m Manager) rollback(s Step, succeeded bool) {
 		_, _ = git.Run(ctx, bare, "worktree", "remove", "--force", s.Path)
 	}
 	_, _ = git.Run(ctx, bare, "worktree", "prune")
-	if s.Action == TrackRemote || s.Action == CreateBranch {
-		if holder, _ := git.WorktreeForBranch(ctx, bare, s.Branch); holder == "" {
-			_, _ = git.Run(ctx, bare, "branch", "-D", s.Branch)
-		}
+	start := s.Start
+	switch s.Action {
+	case TrackRemote:
+		start = "refs/remotes/origin/" + s.Branch
+	case CreateBranch:
+	default:
+		return
+	}
+	if holder, _ := git.WorktreeForBranch(ctx, bare, s.Branch); holder != "" {
+		return
+	}
+	tip, err := git.Run(ctx, bare, "rev-parse", "-q", "--verify", "refs/heads/"+s.Branch)
+	if err != nil {
+		return
+	}
+	if want, err := git.Run(ctx, bare, "rev-parse", "-q", "--verify", start+"^{commit}"); err == nil && tip == want {
+		_, _ = git.Run(ctx, bare, "branch", "-D", s.Branch)
 	}
 }

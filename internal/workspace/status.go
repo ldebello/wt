@@ -6,12 +6,13 @@ import (
 	"github.com/ldebello/wt/internal/git"
 )
 
-// MemberStatus describes one member relative to origin/<default>.
+// MemberStatus describes one member relative to its base: origin/<base> for
+// a branch created with repo:base, else origin/<default>.
 type MemberStatus struct {
 	Member
 	Dirty   bool
-	Commits int  // commits not in origin/<default>
-	Merged  bool // it had work, and that work is in origin/<default> (squash merges included)
+	Commits int  // commits not in the base
+	Merged  bool // it had work, and that work is in the base (squash merges included)
 	Pushed  bool // HEAD is contained in origin/<branch>
 	// Untouched is set for members with nothing of their own: on the default
 	// branch without local commits, or no commits and never pushed.
@@ -50,6 +51,9 @@ func (m Manager) memberStatus(ctx context.Context, member Member) MemberStatus {
 		return ms
 	}
 	base := "origin/" + def
+	if member.Branch != "" {
+		base = baseRef(ctx, m.Index.BarePath(member.Repo), member.Branch, def)
+	}
 	if ms.Commits, ms.Err = git.CountCommits(ctx, member.Path, base, "HEAD"); ms.Err != nil {
 		return ms
 	}

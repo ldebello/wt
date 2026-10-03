@@ -180,14 +180,15 @@ Bundles use the same forms, e.g.
 
 - Nothing is forced. A worktree with uncommitted or untracked changes is
   never removed.
-- A local branch is deleted only when its commits are safe elsewhere: merged
-  into `origin/<default>` (regular, rebase or squash merge) or pushed to
-  `origin/<branch>`.
-- Remote branches are deleted only by `wt ws remove`, and only after you
-  confirm (or pass `--delete-remote`). `wt cleanup` never deletes them.
-  `origin/<branch>` is kept if it has commits that are neither merged nor in
-  the local branch, and a local branch whose only other copy is the
-  `origin/<branch>` being deleted is kept.
+- "Merged" means merged into the branch's base (for `repo:base`, recorded in
+  the branch's git config as `branch.<name>.wtBase`) or the default branch,
+  with regular, rebase or squash merges. Before deleting anything, `wt`
+  checks origin, so a stale remote-tracking branch never counts as a copy.
+- A local branch is deleted only when its commits are safe elsewhere: merged,
+  or pushed to an `origin/<branch>` that is kept.
+- Remote branches are deleted only by `wt ws remove`, after you confirm (or
+  pass `--delete-remote`), and only when merged: an open pull request, yours
+  or a teammate's, is never closed. `wt cleanup` never deletes them.
 - A detached worktree whose commits are on no branch is never removed.
 - `wt sync` and `wt open` move a primary checkout only when it is clean,
   detached, and contains no commits of its own.
@@ -195,7 +196,8 @@ Bundles use the same forms, e.g.
 ### Cleanup
 
 `wt cleanup` fetches the repositories in use and puts each workspace in one
-of these groups:
+of these groups, judging each branch against its base (`repo:base`) or the
+default branch:
 
 - merged (safe to remove)
 - pushed, not merged yet
