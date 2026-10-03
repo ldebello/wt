@@ -41,14 +41,17 @@ type Option struct {
 	// default. It is called lazily, only when the dropdown is opened.
 	Choices    func() ([]Choice, error)
 	ChoiceName string // what a choice is, for help text (e.g. "branch")
-	// Choice is the picked choice value ("" = the default).
+	// Choice is the picked choice value ("" = the default). It is appended to
+	// the label in lists.
 	Choice string
 }
 
-// Choice is one entry of an option's dropdown.
+// Choice is one entry of an option's dropdown. A choice with Next opens a
+// second dropdown, whose pick becomes the value.
 type Choice struct {
 	Label string
 	Value string
+	Next  []Choice
 }
 
 // Prompter asks the user for input. Tests use a fake implementation.
@@ -118,12 +121,27 @@ func chooseFor(options []Option, hovered string) error {
 	if name == "" {
 		name = "option"
 	}
-	picked, err := Terminal{}.Select(strings.TrimSpace(options[i].Label)+": choose "+name, items)
+	label := strings.TrimSpace(options[i].Label)
+	picked, err := Terminal{}.Select(label+": choose "+name, items)
 	if errors.Is(err, ErrAborted) {
 		return nil // Esc in the dropdown just goes back to the list
 	}
 	if err != nil {
 		return err
+	}
+	j := slices.IndexFunc(choices, func(c Choice) bool { return c.Value == picked })
+	if j >= 0 && len(choices[j].Next) > 0 {
+		next := make([]Option, len(choices[j].Next))
+		for k, c := range choices[j].Next {
+			next[k] = Option{Label: c.Label, Value: c.Value}
+		}
+		picked, err = Terminal{}.Select(label+": "+strings.TrimSpace(choices[j].Label), next)
+		if errors.Is(err, ErrAborted) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
 	}
 	options[i].Choice = picked
 	options[i].Selected = true
@@ -138,7 +156,6 @@ func (Terminal) Select(title string, options []Option) (string, error) {
 			Title(title).
 			Description(help(options, groups, view)).
 			Options(huhOptions(Visible(options, groups, view))...).
-			Filtering(true).
 			Value(&value)
 		key, _, err := run(field, nil)
 		if err != nil || key != GroupKey {
@@ -203,12 +220,9 @@ func Values(options []Option) []string {
 	return out
 }
 
-// DisplayLabel is the label shown in lists, including a non-default choice.
+// DisplayLabel is the label shown in lists, followed by the choice.
 func (o Option) DisplayLabel() string {
-	if o.Choice == "" {
-		return o.Label
-	}
-	return o.Label + " @ " + o.Choice
+	return o.Label + o.Choice
 }
 
 // help describes the extra keys available for options.

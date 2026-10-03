@@ -53,7 +53,7 @@ func TestHelpAndLabels(t *testing.T) {
 	if got := (Option{Label: "api"}).DisplayLabel(); got != "api" {
 		t.Errorf("DisplayLabel = %q", got)
 	}
-	if got := (Option{Label: "api", Choice: "feature/x"}).DisplayLabel(); got != "api @ feature/x" {
+	if got := (Option{Label: "api", Choice: ":release"}).DisplayLabel(); got != "api:release" {
 		t.Errorf("DisplayLabel = %q", got)
 	}
 }

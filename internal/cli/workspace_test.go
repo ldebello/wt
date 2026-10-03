@@ -188,7 +188,7 @@ func TestWorkspacePickerBranchChoices(t *testing.T) {
 	mustRun(t, env, nil, "clone", env.NewUpstream(t, "web", "main"))
 	mustRun(t, env, nil, "ws", "W", "--repos", "web")
 
-	fake := &fakeUI{multi: [][]string{{"repo:api=feature/x"}}}
+	fake := &fakeUI{multi: [][]string{{"repo:api=@feature/x"}}}
 	r := mustRun(t, env, fake, "ws", "W")
 	if !strings.Contains(r.out, "branch feature/x tracking origin/feature/x") {
 		t.Errorf("output:\n%s", r.out)
@@ -208,10 +208,60 @@ func TestWorkspacePickerBranchChoices(t *testing.T) {
 	}
 	// Default behaviour first, then the default branch, then the rest; the
 	// workspace branch is not repeated.
-	if len(values) != 3 || values[0] != "" || values[1] != "main" || values[2] != "feature/x" {
+	if len(values) != 3 || values[0] != "" || values[1] != "?main" || values[2] != "?feature/x" {
 		t.Errorf("choices = %+v", choices)
 	}
 	if !strings.Contains(choices[0].Label, "W  (workspace branch") || !strings.Contains(choices[1].Label, "(default branch)") {
 		t.Errorf("labels = %+v", choices)
+	}
+	// Each branch then asks: create the workspace branch from it, or work on it.
+	next := choices[2].Next
+	if len(next) != 2 || next[0].Value != ":feature/x" || next[1].Value != "@feature/x" ||
+		!strings.Contains(next[0].Label, "Create W from feature/x") || !strings.Contains(next[1].Label, "Work directly on feature/x") {
+		t.Errorf("next = %+v", next)
+	}
+}
+
+func TestWorkspaceBaseVersusBranch(t *testing.T) {
+	env := testutil.Setup(t)
+	domino := env.NewUpstream(t, "domino", "main")
+	web := env.NewUpstream(t, "web", "main")
+	testutil.Commit(t, domino, "release-2.4", "fix.txt", "release")
+	testutil.Commit(t, web, "develop", "dev.txt", "develop")
+	mustRun(t, env, nil, "clone", domino)
+	mustRun(t, env, nil, "clone", web)
+
+	// repo:base -> own branch from the base, per repository.
+	r := mustRun(t, env, nil, "ws", "HOTFIX-77", "--repos", "domino:release-2.4,web:develop")
+	for _, want := range []string{"new branch HOTFIX-77 from origin/release-2.4", "new branch HOTFIX-77 from origin/develop"} {
+		if !strings.Contains(r.out, want) {
+			t.Errorf("output missing %q:\n%s", want, r.out)
+		}
+	}
+	// A second hotfix from the same base works: each has its own branch.
+	mustRun(t, env, nil, "ws", "HOTFIX-78", "--repos", "domino:release-2.4")
+	r = mustRun(t, env, nil, "ws", "list")
+	if !strings.Contains(r.out, "HOTFIX-77  domino@HOTFIX-77  web@HOTFIX-77") || !strings.Contains(r.out, "HOTFIX-78  domino@HOTFIX-78") {
+		t.Errorf("list:\n%s", r.out)
+	}
+	if _, err := os.Stat(wsPath(env, "HOTFIX-78", "domino", "fix.txt")); err != nil {
+		t.Error("HOTFIX-78 not based on release-2.4")
+	}
+
+	// repo@branch -> the branch itself, so only one workspace can have it.
+	r = mustRun(t, env, nil, "ws", "REL-A", "--repos", "domino@release-2.4")
+	if !strings.Contains(r.out, "branch release-2.4 tracking origin/release-2.4") {
+		t.Errorf("output:\n%s", r.out)
+	}
+	r = run(t, env, nil, "ws", "REL-B", "--repos", "domino@release-2.4")
+	if r.e == nil || !strings.Contains(r.e.Error(), "already checked out at") {
+		t.Errorf("expected branch-in-use error, got %v", r.e)
+	}
+
+	if r := run(t, env, nil, "ws", "X", "--repos", "domino:nope"); r.e == nil || !strings.Contains(r.e.Error(), `base branch "nope"`) {
+		t.Errorf("expected missing base error, got %v", r.e)
+	}
+	if r := run(t, env, nil, "ws", "X", "--from", "main"); r.e == nil {
+		t.Error("--from should no longer exist")
 	}
 }

@@ -84,19 +84,19 @@ func completeTargets(app *App) completeFunc {
 }
 
 // completeList completes a comma-separated flag value, suggesting values not
-// yet listed. Items with "@branch" are left alone.
+// yet listed. Items with "@branch" or ":base" are left alone.
 func completeList(values func(args []string) []string) completeFunc {
 	return func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		prefix := ""
 		if i := strings.LastIndex(toComplete, ","); i >= 0 {
 			prefix = toComplete[:i+1]
 		}
-		if strings.Contains(toComplete[len(prefix):], "@") {
+		if strings.ContainsAny(toComplete[len(prefix):], "@:") {
 			return nil, noFiles | cobra.ShellCompDirectiveNoSpace
 		}
 		listed := map[string]bool{}
 		for _, item := range strings.Split(prefix, ",") {
-			name, _, _ := strings.Cut(item, "@")
+			name, _, _ := strings.Cut(strings.ReplaceAll(item, ":", "@"), "@")
 			listed[name] = true
 		}
 		var out []string

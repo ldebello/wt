@@ -24,14 +24,17 @@ func newBundleCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bundle <name>",
 		Short: "Create, update or show a bundle of repositories",
-		Long: `A bundle is a named set of repositories (optionally with a branch) that you
-add to workspaces together with 'wt ws <name> --bundles <bundle>'. Bundles
-are stored in settings.toml under [bundles.<name>].
+		Long: `A bundle is a named set of repositories that you add to workspaces
+together with 'wt ws <name> --bundles <bundle>'. Each repository uses the
+same forms as 'wt ws --repos': repo, repo:base (workspace branch from base)
+or repo@branch (that branch itself). Bundles are stored in settings.toml
+under [bundles.<name>].
 
 Without --repos, pick the repositories interactively (the current ones are
 preselected). --repos takes comma-separated values and can be repeated.`,
 		Example: `  wt bundle backend                        # pick repositories
-  wt bundle backend --repos domino,cws@main
+  wt bundle backend --repos domino,cws
+  wt bundle release --repos domino:release-2.4,web:release-2.4
   wt bundle list                           # show every bundle`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -41,7 +44,7 @@ preselected). --repos takes comma-separated values and can be repeated.`,
 			return saveBundle(cmd.Context(), app, args[0], repos, !cmd.Flags().Changed("repos"))
 		},
 	}
-	cmd.Flags().StringSliceVar(&repos, "repos", nil, "repositories in the bundle: repo or repo@branch (comma-separated, repeatable)")
+	cmd.Flags().StringSliceVar(&repos, "repos", nil, "repositories in the bundle: repo, repo:base or repo@branch (comma-separated, repeatable)")
 	cmd.ValidArgsFunction = completeFirstArg(app.bundleNames)
 	registerListCompletion(cmd, "repos", func([]string) []string { return app.repoNames() })
 	cmd.AddCommand(newBundleListCmd(app), newBundleRemoveCmd(app))
@@ -107,7 +110,7 @@ func saveBundle(ctx context.Context, app *App, name string, items []string, pick
 }
 
 // pickBundleRepos offers every indexed repository, preselecting the bundle's
-// current ones with their pinned branches. ChoiceKey pins a branch.
+// current ones with their branch or base. ChoiceKey changes them.
 func pickBundleRepos(ctx context.Context, app *App, ix repo.Index, current config.Bundle) ([]workspace.Spec, error) {
 	names, err := ix.List()
 	if err != nil {
@@ -125,9 +128,10 @@ func pickBundleRepos(ctx context.Context, app *App, ix repo.Index, current confi
 	for i, n := range names {
 		s, selected := pinned[n]
 		options[i] = ui.Option{
-			Label: n, Value: n, Selected: selected, Choice: s.Branch,
+			Label: n, Value: n, Selected: selected,
+			Choice:     strings.TrimPrefix(s.String(), s.Repo), // "", "@branch" or ":base"
 			ChoiceName: "branch",
-			Choices:    branchChoices(ctx, ix, n, "", "not pinned (the workspace branch)"),
+			Choices:    branchChoices(ctx, ix, n, "", "the workspace branch", "the workspace branch (from the default branch)"),
 		}
 	}
 	picked, err := app.UI.MultiSelect("Repositories in bundle", options)
@@ -139,7 +143,9 @@ func pickBundleRepos(ctx context.Context, app *App, ix repo.Index, current confi
 	}
 	specs := make([]workspace.Spec, len(picked))
 	for i, o := range picked {
-		specs[i] = workspace.Spec{Repo: o.Value, Branch: o.Choice}
+		if specs[i], err = workspace.ParseSpec(o.Value + o.Choice); err != nil {
+			return nil, err
+		}
 	}
 	return specs, nil
 }
@@ -147,23 +153,30 @@ func pickBundleRepos(ctx context.Context, app *App, ix repo.Index, current confi
 // branchChoices lists the branches a repository can use, for the ChoiceKey
 // dropdown: first the default behaviour (autoLabel, value ""), then the
 // default branch, then every other branch, most recently committed first.
-// autoBranch, when set, is left out of the rest of the list since the first
-// entry already stands for it.
-func branchChoices(ctx context.Context, ix repo.Index, repoName, autoBranch, autoLabel string) func() ([]ui.Choice, error) {
+// Picking a branch asks whether to create the workspace branch (wsBranch)
+// from it (":base") or to work directly on it ("@branch"). autoBranch, when
+// set, is left out of the list since the first entry already stands for it.
+func branchChoices(ctx context.Context, ix repo.Index, repoName, autoBranch, wsBranch, autoLabel string) func() ([]ui.Choice, error) {
 	return func() ([]ui.Choice, error) {
 		bare := ix.BarePath(repoName)
 		names, err := git.Branches(ctx, bare)
 		if err != nil {
 			return nil, err
 		}
+		branch := func(name, label string) ui.Choice {
+			return ui.Choice{Label: label, Value: "?" + name, Next: []ui.Choice{
+				{Label: "Create " + wsBranch + " from " + name + "  (your own branch, e.g. for a PR into " + name + ")", Value: ":" + name},
+				{Label: "Work directly on " + name, Value: "@" + name},
+			}}
+		}
 		choices := []ui.Choice{{Label: autoLabel, Value: ""}}
 		def, _ := git.DefaultBranch(ctx, bare)
 		if def != "" && def != autoBranch {
-			choices = append(choices, ui.Choice{Label: def + "  (default branch)", Value: def})
+			choices = append(choices, branch(def, def+"  (default branch)"))
 		}
 		for _, n := range names {
 			if n != def && n != autoBranch {
-				choices = append(choices, ui.Choice{Label: n, Value: n})
+				choices = append(choices, branch(n, n))
 			}
 		}
 		return choices, nil

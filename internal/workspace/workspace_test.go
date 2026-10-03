@@ -15,15 +15,20 @@ import (
 )
 
 func TestParseSpecs(t *testing.T) {
-	got, err := ParseSpecs([]string{"a@feature/x,b", " c "})
+	got, err := ParseSpecs([]string{"a@feature/x,b", " c ", "d:release-2.4", "e@x@y"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Spec{{"a", "feature/x"}, {"b", ""}, {"c", ""}}
+	want := []Spec{{"a", "feature/x", ""}, {"b", "", ""}, {"c", "", ""}, {"d", "", "release-2.4"}, {"e", "x@y", ""}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v", got)
 	}
-	for _, bad := range []string{"@x", "a@", "@"} {
+	for _, s := range want {
+		if back, _ := ParseSpec(s.String()); back != s {
+			t.Errorf("round trip %v -> %q -> %v", s, s.String(), back)
+		}
+	}
+	for _, bad := range []string{"@x", "a@", "@", ":x", "a:", "a@b:c", "a:b:c"} {
 		if _, err := ParseSpec(bad); err == nil {
 			t.Errorf("ParseSpec(%q): expected error", bad)
 		}
@@ -32,12 +37,12 @@ func TestParseSpecs(t *testing.T) {
 
 func TestCombine(t *testing.T) {
 	bundles := []NamedSpecs{
-		{Name: "backend", Specs: []Spec{{"api", ""}, {"db", "v1"}, {"shared", "main"}}},
-		{Name: "frontend", Specs: []Spec{{"web", ""}, {"db", "v2"}, {"shared", "main"}}},
+		{Name: "backend", Specs: []Spec{{"api", "", ""}, {"db", "v1", ""}, {"shared", "main", ""}}},
+		{Name: "frontend", Specs: []Spec{{"web", "", ""}, {"db", "v2", ""}, {"shared", "main", ""}}},
 	}
-	explicit := []Spec{{"api", "feature"}, {"web", ""}, {"tools", ""}}
+	explicit := []Spec{{"api", "feature", ""}, {"web", "", ""}, {"tools", "", ""}}
 	got, notes := Combine(bundles, explicit)
-	want := []Spec{{"api", "feature"}, {"db", "v1"}, {"shared", "main"}, {"web", ""}, {"tools", ""}}
+	want := []Spec{{"api", "feature", ""}, {"db", "v1", ""}, {"shared", "main", ""}, {"web", "", ""}, {"tools", "", ""}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Combine = %v; want %v", got, want)
 	}
@@ -47,8 +52,14 @@ func TestCombine(t *testing.T) {
 		t.Errorf("notes:\n%s", joined)
 	}
 
+	// An explicit base overrides a bundle's branch, with a note.
+	got, notes = Combine([]NamedSpecs{{Name: "b", Specs: []Spec{{"db", "v1", ""}}}}, []Spec{{Repo: "db", Base: "release"}})
+	if got[0].Base != "release" || got[0].Branch != "" || len(notes) != 1 || !strings.Contains(notes[0], "a new workspace branch from release") {
+		t.Errorf("got %v, notes %v", got, notes)
+	}
+
 	// An explicit repo without a branch doesn't override a bundle's branch.
-	got, notes = Combine([]NamedSpecs{{Name: "b", Specs: []Spec{{"db", "v1"}}}}, []Spec{{"db", ""}})
+	got, notes = Combine([]NamedSpecs{{Name: "b", Specs: []Spec{{"db", "v1", ""}}}}, []Spec{{"db", "", ""}})
 	if got[0].Branch != "v1" || len(notes) != 1 {
 		t.Errorf("got %v, notes %v", got, notes)
 	}
@@ -83,10 +94,10 @@ func (f *fixture) clone(t *testing.T, name string) {
 	}
 }
 
-func (f *fixture) create(t *testing.T, ws string, specs []Spec, opts Options) []Step {
+func (f *fixture) create(t *testing.T, ws string, specs []Spec) []Step {
 	t.Helper()
 	ctx := context.Background()
-	steps, err := f.m.Plan(ctx, ws, specs, opts)
+	steps, err := f.m.Plan(ctx, ws, specs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +119,7 @@ func TestCreateResolvesBranches(t *testing.T) {
 		f.clone(t, name)
 	}
 
-	steps := f.create(t, "DOM-1", []Spec{{"fresh", ""}, {"remote", ""}, {"pinned", "release"}}, Options{})
+	steps := f.create(t, "DOM-1", []Spec{{"fresh", "", ""}, {"remote", "", ""}, {"pinned", "release", ""}})
 	actions := []Action{steps[0].Action, steps[1].Action, steps[2].Action}
 	if !reflect.DeepEqual(actions, []Action{CreateBranch, TrackRemote, TrackRemote}) {
 		t.Errorf("actions = %v", actions)
@@ -144,7 +155,7 @@ func TestCreateResolvesBranches(t *testing.T) {
 func TestCreateDefaultBranchWorksAlongsidePrimary(t *testing.T) {
 	f := newFixture(t, "app")
 	f.clone(t, "app")
-	f.create(t, "W", []Spec{{"app", "main"}}, Options{})
+	f.create(t, "W", []Spec{{"app", "main", ""}})
 	if got := head(t, filepath.Join(f.m.Path("W"), "app")); got != "main" {
 		t.Errorf("on %s", got)
 	}
@@ -154,11 +165,11 @@ func TestCreateIncrementalLeavesExistingUntouched(t *testing.T) {
 	f := newFixture(t, "a", "b")
 	f.clone(t, "a")
 	f.clone(t, "b")
-	f.create(t, "W", []Spec{{"a", ""}}, Options{})
+	f.create(t, "W", []Spec{{"a", "", ""}})
 	work := filepath.Join(f.m.Path("W"), "a", "work.txt")
 	testutil.WriteFile(t, work, "uncommitted")
 
-	steps := f.create(t, "W", []Spec{{"a", "other"}, {"b", ""}}, Options{})
+	steps := f.create(t, "W", []Spec{{"a", "other", ""}, {"b", "", ""}})
 	if steps[0].Action != Reuse || !strings.Contains(steps[0].Describe(), "requested branch other") {
 		t.Errorf("step = %+v (%s)", steps[0], steps[0].Describe())
 	}
@@ -170,38 +181,63 @@ func TestCreateIncrementalLeavesExistingUntouched(t *testing.T) {
 	}
 }
 
-func TestCreateLocalBranchAndFrom(t *testing.T) {
+func TestCreateFromBase(t *testing.T) {
 	f := newFixture(t, "app")
 	testutil.Commit(t, f.ups["app"], "release", "r.txt", "r")
 	f.clone(t, "app")
 	ctx := context.Background()
 
-	steps := f.create(t, "W", []Spec{{"app", ""}}, Options{From: "release"})
-	if steps[0].Start != "origin/release" {
-		t.Errorf("start = %q", steps[0].Start)
+	// app:release creates the workspace branch from origin/release.
+	steps := f.create(t, "W", []Spec{{Repo: "app", Base: "release"}})
+	if steps[0].Action != CreateBranch || steps[0].Start != "origin/release" || steps[0].Branch != "W" {
+		t.Errorf("step = %+v", steps[0])
 	}
 	if _, err := os.Stat(filepath.Join(f.m.Path("W"), "app", "r.txt")); err != nil {
 		t.Error("branch not based on release")
 	}
 
-	// Remove the worktree but keep the branch: re-adding checks it out.
-	testutil.Git(t, f.ix.BarePath("app"), "worktree", "remove", filepath.Join(f.m.Path("W"), "app"))
-	steps = f.create(t, "W", []Spec{{"app", ""}}, Options{From: "release"})
-	if steps[0].Action != CheckoutLocal || !strings.Contains(steps[0].Describe(), "--from release ignored") {
+	// Two workspaces can start from the same base: each gets its own branch.
+	steps = f.create(t, "V", []Spec{{Repo: "app", Base: "release"}})
+	if steps[0].Branch != "V" || steps[0].Start != "origin/release" {
 		t.Errorf("step = %+v", steps[0])
 	}
 
-	if _, err := f.m.Plan(ctx, "X", []Spec{{"app", ""}}, Options{From: "nope"}); err == nil || !strings.Contains(err.Error(), `base branch "nope"`) {
+	// Remove the worktree but keep the branch: re-adding checks it out and
+	// reports the base as ignored.
+	testutil.Git(t, f.ix.BarePath("app"), "worktree", "remove", filepath.Join(f.m.Path("W"), "app"))
+	steps = f.create(t, "W", []Spec{{Repo: "app", Base: "release"}})
+	if steps[0].Action != CheckoutLocal || !strings.Contains(steps[0].Describe(), "base release ignored: it already exists") {
+		t.Errorf("step = %+v (%s)", steps[0], steps[0].Describe())
+	}
+
+	if _, err := f.m.Plan(ctx, "X", []Spec{{Repo: "app", Base: "nope"}}); err == nil || !strings.Contains(err.Error(), `base branch "nope"`) {
 		t.Errorf("expected missing base error, got %v", err)
+	}
+}
+
+func TestCreateFromLocalBaseWithOwnCommits(t *testing.T) {
+	f := newFixture(t, "app")
+	f.clone(t, "app")
+
+	// Stack DOM-2 on DOM-1, which has unpushed commits: the local branch is
+	// the base, not origin.
+	f.create(t, "DOM-1", []Spec{{Repo: "app"}})
+	mine := testutil.Commit(t, filepath.Join(f.m.Path("DOM-1"), "app"), "DOM-1", "one.txt", "1")
+	steps := f.create(t, "DOM-2", []Spec{{Repo: "app", Base: "DOM-1"}})
+	if steps[0].Start != "DOM-1" {
+		t.Errorf("start = %q", steps[0].Start)
+	}
+	if got := testutil.Git(t, filepath.Join(f.m.Path("DOM-2"), "app"), "rev-parse", "HEAD"); got != mine {
+		t.Errorf("DOM-2 starts at %s; want %s", got, mine)
 	}
 }
 
 func TestPlanReportsAllProblems(t *testing.T) {
 	f := newFixture(t, "app")
 	f.clone(t, "app")
-	f.create(t, "A", []Spec{{"app", "shared"}}, Options{})
+	f.create(t, "A", []Spec{{"app", "shared", ""}})
 
-	_, err := f.m.Plan(context.Background(), "B", []Spec{{"app", "shared"}, {"ghost", ""}, {"app", ""}}, Options{})
+	_, err := f.m.Plan(context.Background(), "B", []Spec{{"app", "shared", ""}, {"ghost", "", ""}, {"app", "", ""}})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -221,7 +257,7 @@ func TestApplyRollsBackOnFailure(t *testing.T) {
 	f.clone(t, "b")
 	ctx := context.Background()
 
-	steps, err := f.m.Plan(ctx, "W", []Spec{{"a", ""}, {"b", ""}}, Options{})
+	steps, err := f.m.Plan(ctx, "W", []Spec{{"a", "", ""}, {"b", "", ""}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +280,7 @@ func TestApplyRollsBackOnFailure(t *testing.T) {
 func TestLoadAndNames(t *testing.T) {
 	f := newFixture(t, "app")
 	f.clone(t, "app")
-	f.create(t, "W", []Spec{{"app", ""}}, Options{})
+	f.create(t, "W", []Spec{{"app", "", ""}})
 	testutil.WriteFile(t, filepath.Join(f.m.Path("W"), "CLAUDE.md"), "x")
 	if err := os.MkdirAll(f.m.Path("Empty"), 0o755); err != nil {
 		t.Fatal(err)
@@ -271,7 +307,7 @@ func TestRemoveMembers(t *testing.T) {
 	for _, name := range []string{"merged", "pushed", "local", "dirty"} {
 		f.clone(t, name)
 	}
-	f.create(t, "W", []Spec{{"merged", ""}, {"pushed", ""}, {"local", ""}, {"dirty", ""}}, Options{})
+	f.create(t, "W", []Spec{{"merged", "", ""}, {"pushed", "", ""}, {"local", "", ""}, {"dirty", "", ""}})
 	ws := f.m.Path("W")
 	ctx := context.Background()
 
@@ -335,7 +371,7 @@ func TestCreateFastForwardsLocalBranchBehindOrigin(t *testing.T) {
 	bare := f.ix.BarePath("app")
 
 	// Work on feat, push it, then drop the worktree but keep the branch.
-	f.create(t, "W", []Spec{{"app", "feat"}}, Options{})
+	f.create(t, "W", []Spec{{"app", "feat", ""}})
 	wt := filepath.Join(f.m.Path("W"), "app")
 	testutil.Commit(t, wt, "feat", "a.txt", "mine")
 	testutil.Git(t, wt, "push", "-q", "-u", "origin", "feat")
@@ -345,7 +381,7 @@ func TestCreateFastForwardsLocalBranchBehindOrigin(t *testing.T) {
 	theirs := testutil.Commit(t, f.ups["app"], "feat", "b.txt", "theirs")
 	testutil.Git(t, bare, "fetch", "-q", "origin")
 
-	steps := f.create(t, "W", []Spec{{"app", "feat"}}, Options{})
+	steps := f.create(t, "W", []Spec{{"app", "feat", ""}})
 	if s := steps[0]; s.Action != CheckoutLocal || s.Behind != 1 || s.Ahead != 0 || !strings.Contains(s.Describe(), "updated with 1 new commits from origin/feat") {
 		t.Errorf("step = %+v (%s)", s, s.Describe())
 	}
@@ -359,7 +395,7 @@ func TestCreateFastForwardsLocalBranchBehindOrigin(t *testing.T) {
 	testutil.Git(t, bare, "fetch", "-q", "origin")
 	testutil.Git(t, bare, "worktree", "remove", wt)
 
-	steps, err := f.m.Plan(ctx, "W", []Spec{{"app", "feat"}}, Options{})
+	steps, err := f.m.Plan(ctx, "W", []Spec{{"app", "feat", ""}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +413,7 @@ func TestCreateFastForwardsLocalBranchBehindOrigin(t *testing.T) {
 func TestRemoveKeepsDetachedCommits(t *testing.T) {
 	f := newFixture(t, "app")
 	f.clone(t, "app")
-	f.create(t, "W", []Spec{{"app", ""}}, Options{})
+	f.create(t, "W", []Spec{{"app", "", ""}})
 	wt := filepath.Join(f.m.Path("W"), "app")
 	testutil.Git(t, wt, "checkout", "-q", "--detach")
 	testutil.WriteFile(t, filepath.Join(wt, "d.txt"), "d")

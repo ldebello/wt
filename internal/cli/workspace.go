@@ -22,7 +22,6 @@ var reservedWorkspaceNames = []string{"list", "remove"}
 
 func newWorkspaceCmd(app *App) *cobra.Command {
 	var repos, bundles []string
-	var from string
 	var noFetch bool
 	cmd := &cobra.Command{
 		Use:     "workspace <name>",
@@ -31,21 +30,27 @@ func newWorkspaceCmd(app *App) *cobra.Command {
 		Long: `Create ~/workspaces/<name>/ or add repositories to it, one git worktree per
 repository. Repositories already in the workspace are left untouched.
 
-Without --repos or --bundles, pick bundles and repositories interactively.
---repos and --bundles take comma-separated values and can be repeated.
+Without --repos or --bundles, pick bundles and repositories interactively
+(ctrl+b on a repository chooses its branch). --repos and --bundles take
+comma-separated values and can be repeated. Each repository is one of:
 
-A repository without @branch uses the workspace name as branch: an existing
-local branch, else origin/<name>, else a new branch from origin/<default>
-(or --from).
+  repo          the workspace branch <name>: an existing local branch, else
+                origin/<name>, else a new branch from origin/<default>
+  repo:base     the workspace branch <name>, created from <base> if it does
+                not exist yet (your own branch, e.g. for a PR into <base>)
+  repo@branch   work directly on an existing <branch> (e.g. to review it);
+                a branch can be checked out in only one workspace at a time
 
 Before resolving branches, wt asks origin for the latest version of the
 branches involved (one quick request per repository, in parallel) and
 fetches only what changed. An existing local branch that is behind
 origin/<branch> is fast-forwarded; one that has diverged is left as is.
 --no-fetch skips the network and uses the refs from the last 'wt sync'.`,
-		Example: `  wt ws DOM-12345                      # pick bundles and repositories
-  wt ws DOM-12345 --repos domino,cws@main
-  wt ws DOM-12345 --bundles backend --repos web@feature/foo --repos tools`,
+		Example: `  wt ws DOM-12345                                   # pick bundles and repositories
+  wt ws DOM-12345 --repos domino,cws                # branch DOM-12345 in both
+  wt ws HOTFIX-77 --repos domino:release-2.4,web:develop   # HOTFIX-77 from each base
+  wt ws REVIEW-1 --repos domino@feature/foo         # work on feature/foo itself
+  wt ws DOM-12345 --bundles backend --repos tools`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -56,15 +61,13 @@ origin/<branch> is fast-forwarded; one that has diverged is left as is.
 				repos:   repos,
 				bundles: bundles,
 				pick:    !cmd.Flags().Changed("repos") && !cmd.Flags().Changed("bundles"),
-				opts:    workspace.Options{From: from},
 				noFetch: noFetch,
 			}
 			return createWorkspace(cmd.Context(), app, req)
 		},
 	}
-	cmd.Flags().StringSliceVar(&repos, "repos", nil, "repositories to add: repo or repo@branch (comma-separated, repeatable)")
+	cmd.Flags().StringSliceVar(&repos, "repos", nil, "repositories to add: repo, repo:base or repo@branch (comma-separated, repeatable)")
 	cmd.Flags().StringSliceVar(&bundles, "bundles", nil, "bundles to add (comma-separated, repeatable)")
-	cmd.Flags().StringVar(&from, "from", "", "base for newly created branches instead of the default branch")
 	cmd.Flags().BoolVar(&noFetch, "no-fetch", false, "don't check origin for newer branches (work offline)")
 	cmd.ValidArgsFunction = completeFirstArg(app.workspaceNames)
 	registerListCompletion(cmd, "repos", func([]string) []string { return app.repoNames() })
@@ -77,7 +80,6 @@ type createRequest struct {
 	name           string
 	repos, bundles []string
 	pick           bool // no --repos/--bundles: choose interactively
-	opts           workspace.Options
 	noFetch        bool
 }
 
@@ -103,10 +105,10 @@ func createWorkspace(ctx context.Context, app *App, req createRequest) error {
 	}
 
 	if !req.noFetch {
-		fetchBranches(ctx, app, mgr, req.name, specs, req.opts.From)
+		fetchBranches(ctx, app, mgr, req.name, specs)
 	}
 
-	steps, err := mgr.Plan(ctx, req.name, specs, req.opts)
+	steps, err := mgr.Plan(ctx, req.name, specs)
 	if err != nil {
 		return fmt.Errorf("nothing was created:\n%w", err)
 	}
@@ -143,9 +145,9 @@ func createWorkspace(ctx context.Context, app *App, req createRequest) error {
 
 // fetchBranches refreshes, for every repository about to be added, the
 // branches that resolution depends on: the requested branch, the default
-// branch (base for new branches) and --from. Failures are warnings: wt then
-// works from the local refs.
-func fetchBranches(ctx context.Context, app *App, mgr workspace.Manager, wsName string, specs []workspace.Spec, from string) {
+// branch (base for new branches) and the spec's base. Failures are warnings:
+// wt then works from the local refs.
+func fetchBranches(ctx context.Context, app *App, mgr workspace.Manager, wsName string, specs []workspace.Spec) {
 	var current workspace.Workspace
 	if mgr.Exists(wsName) {
 		current, _ = mgr.Load(wsName)
@@ -164,8 +166,8 @@ func fetchBranches(ctx context.Context, app *App, mgr workspace.Manager, wsName 
 		if def, err := mgr.Index.DefaultBranch(ctx, s.Repo); err == nil {
 			list = append(list, def)
 		}
-		if from != "" {
-			list = append(list, from)
+		if s.Base != "" {
+			list = append(list, s.Base)
 		}
 		branches[s.Repo] = list
 		names = append(names, s.Repo)
@@ -250,7 +252,7 @@ func pickWorkspaceContents(ctx context.Context, app *App, mgr workspace.Manager,
 			o.Selected, o.Label = true, n+"  (in workspace on "+m.Branch+")"
 		} else {
 			o.ChoiceName = "branch"
-			o.Choices = branchChoices(ctx, mgr.Index, n, wsName, wsName+"  (workspace branch: existing, or new from the default branch)")
+			o.Choices = branchChoices(ctx, mgr.Index, n, wsName, wsName, wsName+"  (workspace branch: existing, or new from the default branch)")
 		}
 		options = append(options, o)
 	}
@@ -268,7 +270,7 @@ func pickWorkspaceContents(ctx context.Context, app *App, mgr workspace.Manager,
 			bundles = append(bundles, name)
 		} else if name, ok := strings.CutPrefix(o.Value, repoPrefix); ok {
 			if _, in := current.Member(name); !in {
-				repos = append(repos, workspace.Spec{Repo: name, Branch: o.Choice}.String())
+				repos = append(repos, name+o.Choice) // "", "@branch" or ":base"
 			}
 		}
 	}

@@ -88,31 +88,44 @@ list mixes kinds (bundles and repositories, or workspaces and repositories),
 press `ctrl+t` to cycle between showing all of them or only one kind;
 selections are kept while switching. In the workspace and bundle pickers,
 `ctrl+b` on a repository opens a dropdown of its branches (type to search).
-The first entry is the default (the workspace branch), then the default
-branch, then the rest, most recent first. The chosen branch is shown next to
-the repository (`domino @ feature/x`). `--repos` and `--bundles` always take a
-value: comma-separated, or repeat the flag (`--repos a --repos b@main`).
+The first entry is the default (the workspace branch). Then come the default
+branch and the rest, most recent first. After picking a branch, choose
+between creating the workspace branch from it and working directly on it.
+The result is shown next to the repository in the same syntax as `--repos`
+(`domino:release-2.4`, `domino@feature/x`). `--repos` and `--bundles` always
+take a value: comma-separated (no spaces, or quote the list), or repeat the
+flag (`--repos a --repos b:develop`).
 
 ### Workspaces and branches
 
-`--repos` takes `repo` or `repo@branch`, comma-separated:
+Each repository in `--repos` takes one of three forms:
+
+| Form | Branch in the worktree | Typical use |
+|---|---|---|
+| `repo` | the workspace branch `<name>`, new from `origin/<default>` if it doesn't exist | a ticket off main |
+| `repo:base` | the workspace branch `<name>`, new from `base` if it doesn't exist | a hotfix or PR into `base`, or stacking on another branch |
+| `repo@branch` | `branch` itself | reviewing or continuing an existing branch |
 
 ```bash
-wt ws DOM-12345                                   # pick bundles and repositories
-wt ws DOM-12345 --repos domino                    # branch DOM-12345
-wt ws DOM-12345 --repos domino@main,cws@dev,web   # explicit branches
-wt ws DOM-12345 --repos web --from release-2.4    # new branches start from release-2.4
-wt ws DOM-12345 --repos domino --no-fetch         # offline: use the refs from the last sync
+wt ws DOM-12345                                         # pick bundles and repositories
+wt ws DOM-12345 --repos domino,cws                      # DOM-12345 in both
+wt ws HOTFIX-77 --repos domino:release-2.4,web:develop  # HOTFIX-77 from a different base per repo
+wt ws HOTFIX-78 --repos domino:release-2.4              # another hotfix from the same base
+wt ws REVIEW-1  --repos domino@feature/foo              # work on feature/foo itself
+wt ws DOM-12345 --repos domino --no-fetch               # offline: use the refs from the last sync
 ```
 
-A repository without `@branch` uses the workspace name as its branch. `wt`
-uses the first of these that applies:
+With `repo` and `repo:base`, the workspace branch is found or created in
+this order:
 
 1. An existing local branch.
-2. `origin/<branch>`, checked out as a tracking branch.
-3. A new branch from `origin/<default>` (or `--from`). It has no upstream
-   until the first `git push`, which sets one up automatically
-   (`push.autoSetupRemote`).
+2. `origin/<name>`, checked out as a tracking branch.
+3. A new branch from `base` (or `origin/<default>` without one). For a base,
+   `origin/<base>` is used unless the local branch has commits of its own
+   (stacking on unpushed work). The new branch has no upstream until the
+   first `git push`, which sets one up automatically (`push.autoSetupRemote`).
+
+If the branch already exists, the base is ignored and `wt` says so.
 
 Notes:
 
@@ -124,15 +137,15 @@ Notes:
   workspace adds the new repositories and leaves the existing ones alone.
 - **Latest branches from origin.** Before resolving branches, `wt` asks
   origin for the branches involved (the workspace branch, the default branch
-  and `--from`): one quick request per repository, in parallel, fetching
+  and any base): one quick request per repository, in parallel, fetching
   only what changed. A branch a teammate pushed after your last sync is
   found and tracked. An existing local branch that is behind
   `origin/<branch>` is fast-forwarded. One that has diverged is left as is,
   with a note to `git pull`. If origin can't be reached, `wt` warns and uses
   the local refs; `--no-fetch` skips the check.
 - **One worktree per branch.** Git allows a branch to be checked out in only
-  one worktree, so two workspaces can't use the same branch of the same
-  repository.
+  one worktree, so two workspaces can't both use `domino@release-2.4`. Use
+  `domino:release-2.4` instead: each workspace then gets its own branch.
 - **No metadata file.** A workspace's repositories are read from the
   worktrees it contains.
 
@@ -142,10 +155,13 @@ When a workspace combines bundles and `--repos`:
 
 - **Repositories:** it gets every repository from every bundle and from
   `--repos`.
-- **Branch from `--repos`:** an explicit `--repos repo@branch` overrides the
-  bundles.
-- **Bundles that disagree:** if two bundles pin different branches for the
-  same repository, the first bundle listed wins.
+- **Branch from `--repos`:** an explicit `--repos repo@branch` or
+  `repo:base` overrides the bundles.
+- **Bundles that disagree:** if two bundles pin different branches or bases
+  for the same repository, the first bundle listed wins.
+
+Bundles use the same forms, e.g.
+`wt bundle release --repos domino:release-2.4,web:release-2.4`.
 
 `wt` prints a note every time it resolves one of these conflicts.
 

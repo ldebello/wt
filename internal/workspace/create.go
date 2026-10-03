@@ -77,19 +77,12 @@ func branchOrDetached(branch string) string {
 	return "branch " + branch
 }
 
-// Options tunes workspace creation.
-type Options struct {
-	// From is the base for newly created branches instead of the default
-	// branch. A local branch is preferred over origin/<From>.
-	From string
-}
-
 // Plan resolves specs for workspace name without changing anything. All
 // problems are reported together so nothing is created when any repo is
-// invalid. Specs without a branch use the workspace name as branch:
-// an existing local branch, else origin/<branch>, else a new branch from
-// origin/<default> (or Options.From).
-func (m Manager) Plan(ctx context.Context, name string, specs []Spec, opts Options) ([]Step, error) {
+// invalid. A spec without @branch uses the workspace name as branch: an
+// existing local branch, else origin/<branch>, else a new branch from the
+// spec's base (repo:base) or origin/<default>.
+func (m Manager) Plan(ctx context.Context, name string, specs []Spec) ([]Step, error) {
 	existing := Workspace{Name: name, Path: m.Path(name)}
 	if m.Exists(name) {
 		var err error
@@ -106,7 +99,7 @@ func (m Manager) Plan(ctx context.Context, name string, specs []Spec, opts Optio
 			continue
 		}
 		seen[spec.Repo] = true
-		step, err := m.planOne(ctx, existing, spec, opts)
+		step, err := m.planOne(ctx, existing, spec)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", spec.Repo, err))
 			continue
@@ -116,7 +109,7 @@ func (m Manager) Plan(ctx context.Context, name string, specs []Spec, opts Optio
 	return steps, errors.Join(errs...)
 }
 
-func (m Manager) planOne(ctx context.Context, ws Workspace, spec Spec, opts Options) (Step, error) {
+func (m Manager) planOne(ctx context.Context, ws Workspace, spec Spec) (Step, error) {
 	if err := m.Index.Require(spec.Repo); err != nil {
 		return Step{}, err
 	}
@@ -126,7 +119,10 @@ func (m Manager) planOne(ctx context.Context, ws Workspace, spec Spec, opts Opti
 	}
 	if member, ok := ws.Member(spec.Repo); ok {
 		step.Action = Reuse
-		if member.Branch != step.Branch {
+		switch {
+		case spec.Base != "":
+			step.Note = ignoredBase(spec.Base, "already in the workspace")
+		case member.Branch != step.Branch:
 			step.Note = "requested branch " + step.Branch
 		}
 		step.Branch = member.Branch
@@ -151,7 +147,7 @@ func (m Manager) planOne(ctx context.Context, ws Workspace, spec Spec, opts Opti
 	switch {
 	case git.LocalBranchExists(ctx, bare, step.Branch):
 		step.Action = CheckoutLocal
-		step.Note = ignoredFrom(opts.From, "it already exists")
+		step.Note = ignoredBase(spec.Base, "it already exists")
 		if git.RemoteBranchExists(ctx, bare, step.Branch) {
 			remote := "refs/remotes/origin/" + step.Branch
 			local := "refs/heads/" + step.Branch
@@ -164,40 +160,45 @@ func (m Manager) planOne(ctx context.Context, ws Workspace, spec Spec, opts Opti
 		}
 	case git.RemoteBranchExists(ctx, bare, step.Branch):
 		step.Action = TrackRemote
-		step.Note = ignoredFrom(opts.From, "it exists on origin")
+		step.Note = ignoredBase(spec.Base, "it exists on origin")
 	default:
 		step.Action = CreateBranch
-		if step.Start, err = m.startPoint(ctx, spec.Repo, opts.From); err != nil {
+		if step.Start, err = m.startPoint(ctx, spec.Repo, spec.Base); err != nil {
 			return Step{}, err
 		}
 	}
 	return step, nil
 }
 
-// ignoredFrom notes that --from does not apply to an existing branch.
-func ignoredFrom(from, why string) string {
-	if from == "" {
+// ignoredBase notes that a base does not apply to an existing branch.
+func ignoredBase(base, why string) string {
+	if base == "" {
 		return ""
 	}
-	return "--from " + from + " ignored: " + why
+	return "base " + base + " ignored: " + why
 }
 
-func (m Manager) startPoint(ctx context.Context, repoName, from string) (string, error) {
+// startPoint returns where a new workspace branch starts: origin/<default>
+// without a base. For a base, origin/<base> is used unless the local branch
+// has commits of its own (e.g. stacking on unpushed work).
+func (m Manager) startPoint(ctx context.Context, repoName, base string) (string, error) {
 	bare := m.Index.BarePath(repoName)
-	if from == "" {
+	if base == "" {
 		def, err := git.DefaultBranch(ctx, bare)
 		if err != nil {
 			return "", err
 		}
 		return "origin/" + def, nil
 	}
-	if git.LocalBranchExists(ctx, bare, from) {
-		return from, nil
+	local := git.LocalBranchExists(ctx, bare, base)
+	remote := git.RemoteBranchExists(ctx, bare, base)
+	switch {
+	case local && (!remote || !git.IsAncestor(ctx, bare, "refs/heads/"+base, "refs/remotes/origin/"+base)):
+		return base, nil
+	case remote:
+		return "origin/" + base, nil
 	}
-	if git.RemoteBranchExists(ctx, bare, from) {
-		return "origin/" + from, nil
-	}
-	return "", fmt.Errorf("base branch %q not found locally or on origin", from)
+	return "", fmt.Errorf("base branch %q not found locally or on origin", base)
 }
 
 // Apply creates the workspace directory and the planned worktrees, in

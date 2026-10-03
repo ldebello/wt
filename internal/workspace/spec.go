@@ -5,27 +5,50 @@ import (
 	"strings"
 )
 
-// Spec is a requested repository with an optional branch ("repo@branch").
-// An empty Branch means "use the workspace name".
+// Spec is a requested repository:
+//
+//	repo         the workspace branch (existing, or new from the default branch)
+//	repo@branch  work directly on an existing branch
+//	repo:base    the workspace branch, created from base if it does not exist
+//
+// At most one of Branch and Base is set.
 type Spec struct {
 	Repo   string
-	Branch string
+	Branch string // check out this branch instead of the workspace branch
+	Base   string // start point for a new workspace branch
 }
 
 func (s Spec) String() string {
-	if s.Branch == "" {
-		return s.Repo
+	switch {
+	case s.Branch != "":
+		return s.Repo + "@" + s.Branch
+	case s.Base != "":
+		return s.Repo + ":" + s.Base
 	}
-	return s.Repo + "@" + s.Branch
+	return s.Repo
 }
 
-// ParseSpec parses "repo" or "repo@branch".
+const specSyntax = "expected repo, repo@branch (work on branch) or repo:base (new workspace branch from base)"
+
+// ParseSpec parses "repo", "repo@branch" or "repo:base". Git branch names
+// cannot contain ':', so the separators are unambiguous.
 func ParseSpec(s string) (Spec, error) {
-	repo, branch, hasBranch := strings.Cut(strings.TrimSpace(s), "@")
-	if repo == "" || (hasBranch && branch == "") {
-		return Spec{}, fmt.Errorf("invalid repository %q: expected repo or repo@branch", s)
+	s = strings.TrimSpace(s)
+	i := strings.IndexAny(s, "@:")
+	if i < 0 {
+		if s == "" {
+			return Spec{}, fmt.Errorf("invalid repository %q: %s", s, specSyntax)
+		}
+		return Spec{Repo: s}, nil
 	}
-	return Spec{Repo: repo, Branch: branch}, nil
+	repo, sep, rest := s[:i], s[i], s[i+1:]
+	if repo == "" || rest == "" || strings.ContainsAny(rest, ":") {
+		return Spec{}, fmt.Errorf("invalid repository %q: %s", s, specSyntax)
+	}
+	if sep == '@' {
+		return Spec{Repo: repo, Branch: rest}, nil
+	}
+	return Spec{Repo: repo, Base: rest}, nil
 }
 
 // ParseSpecs parses a list of specs, also splitting comma-separated items.
@@ -55,7 +78,7 @@ type NamedSpecs struct {
 // Combine merges bundle specs and explicit specs into one list, one entry per
 // repository, in order of first appearance:
 //   - the set of repositories is the union of all bundles and explicit specs;
-//   - an explicit repo@branch overrides any bundle;
+//   - an explicit repo@branch or repo:base overrides any bundle;
 //   - when bundles disagree on a branch, the first bundle wins.
 //
 // Every automatic resolution is described in the returned notes.
@@ -70,9 +93,9 @@ func Combine(bundles []NamedSpecs, explicit []Spec) ([]Spec, []string) {
 		switch {
 		case !seen:
 			order = append(order, spec.Repo)
-		case prev.Branch == spec.Branch:
+		case prev.Branch == spec.Branch && prev.Base == spec.Base:
 			return
-		case override && spec.Branch != "":
+		case override && (spec.Branch != "" || spec.Base != ""):
 			notes = append(notes, fmt.Sprintf("%s: using %s from %s over %s from %s", spec.Repo, branchLabel(spec), from, branchLabel(prev), source[spec.Repo]))
 		default:
 			notes = append(notes, fmt.Sprintf("%s: keeping %s from %s, ignoring %s from %s", spec.Repo, branchLabel(prev), source[spec.Repo], branchLabel(spec), from))
@@ -98,8 +121,11 @@ func Combine(bundles []NamedSpecs, explicit []Spec) ([]Spec, []string) {
 }
 
 func branchLabel(s Spec) string {
-	if s.Branch == "" {
-		return "the workspace branch"
+	switch {
+	case s.Branch != "":
+		return "branch " + s.Branch
+	case s.Base != "":
+		return "a new workspace branch from " + s.Base
 	}
-	return "branch " + s.Branch
+	return "the workspace branch"
 }

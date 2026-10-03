@@ -28,13 +28,13 @@ func TestStatusSummary(t *testing.T) {
 		}
 	}
 
-	f.create(t, "Fresh", []Spec{{"a", ""}, {"b", ""}}, Options{})
+	f.create(t, "Fresh", []Spec{{"a", "", ""}, {"b", "", ""}})
 	if label, safe := summary("Fresh"); label != "no commits yet" || safe {
 		t.Errorf("Fresh: %q %v", label, safe)
 	}
 
 	// One repo squash-merged upstream, the other untouched: safe.
-	f.create(t, "Done", []Spec{{"a", ""}, {"b", ""}}, Options{})
+	f.create(t, "Done", []Spec{{"a", "", ""}, {"b", "", ""}})
 	testutil.Commit(t, filepath.Join(f.m.Path("Done"), "a"), "Done", "x.txt", "x")
 	testutil.Commit(t, f.ups["a"], "main", "x.txt", "x")
 	fetch()
@@ -44,7 +44,7 @@ func TestStatusSummary(t *testing.T) {
 
 	// Pushed, then merged with a merge commit upstream: no commits ahead of
 	// origin/main any more, but still merged rather than untouched.
-	f.create(t, "MergeCommit", []Spec{{"b", ""}, {"a", "main"}}, Options{})
+	f.create(t, "MergeCommit", []Spec{{"b", "", ""}, {"a", "main", ""}})
 	testutil.Commit(t, filepath.Join(f.m.Path("MergeCommit"), "b"), "MergeCommit", "w.txt", "w")
 	testutil.Git(t, filepath.Join(f.m.Path("MergeCommit"), "b"), "push", "-q", "-u", "origin", "MergeCommit")
 	testutil.Git(t, f.ups["b"], "merge", "-q", "--no-ff", "-m", "merge", "MergeCommit")
@@ -59,7 +59,7 @@ func TestStatusSummary(t *testing.T) {
 		t.Errorf("MergeCommit with a commit on main: %q %v", label, safe)
 	}
 
-	f.create(t, "Local", []Spec{{"a", ""}}, Options{})
+	f.create(t, "Local", []Spec{{"a", "", ""}})
 	testutil.Commit(t, filepath.Join(f.m.Path("Local"), "a"), "Local", "y.txt", "y")
 	if label, safe := summary("Local"); label != "contains unpushed commits" || safe {
 		t.Errorf("Local: %q %v", label, safe)
@@ -75,7 +75,7 @@ func TestStatusSummary(t *testing.T) {
 		t.Errorf("Local dirty: %q", label)
 	}
 
-	f.create(t, "Empty", nil, Options{})
+	f.create(t, "Empty", nil)
 	if label, safe := summary("Empty"); label != "empty" || safe {
 		t.Errorf("Empty: %q %v", label, safe)
 	}

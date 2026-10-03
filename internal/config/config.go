@@ -52,7 +52,7 @@ type Harness struct {
 	Template string `toml:"template,omitempty"` // ~/.wt/templates/<name>.md or a built-in template
 }
 
-// Bundle is a named set of repo specs ("repo" or "repo@branch").
+// Bundle is a named set of repo specs ("repo", "repo@branch" or "repo:base").
 type Bundle struct {
 	Repos []string `toml:"repos"`
 }
