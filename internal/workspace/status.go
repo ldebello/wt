@@ -14,7 +14,7 @@ type MemberStatus struct {
 	Merged  bool // it had work, and that work is in origin/<default> (squash merges included)
 	Pushed  bool // HEAD is contained in origin/<branch>
 	// Untouched is set for members with nothing of their own: on the default
-	// branch, or no commits and never pushed.
+	// branch without local commits, or no commits and never pushed.
 	Untouched bool
 	Err       error
 }
@@ -54,7 +54,7 @@ func (m Manager) memberStatus(ctx context.Context, member Member) MemberStatus {
 		return ms
 	}
 	switch {
-	case member.Branch == def:
+	case member.Branch == def && ms.Commits == 0:
 		ms.Untouched = true
 	case ms.Commits > 0:
 		ms.Merged, _ = git.Merged(ctx, member.Path, base, "HEAD")

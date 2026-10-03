@@ -45,9 +45,10 @@ func (r RemoveResult) Describe() string {
 // RemoveMembers removes the worktrees of the given members. It never forces:
 // a worktree with uncommitted or untracked changes is skipped. A local branch
 // is deleted only when its commits are safe elsewhere (merged into
-// origin/<default>, including squash merges, or pushed to origin/<branch>).
-// When deleteRemote is set, origin/<branch> is deleted too (never the
-// default branch).
+// origin/<default>, including squash merges, or pushed to an origin/<branch>
+// that is kept). When deleteRemote is set, origin/<branch> is deleted too
+// (never the default branch) if its commits are merged or in the local
+// branch. A detached worktree whose HEAD is on no branch is skipped.
 func (m Manager) RemoveMembers(ctx context.Context, members []Member, deleteRemote bool) []RemoveResult {
 	results := make([]RemoveResult, len(members))
 	for i, member := range members {
@@ -63,6 +64,10 @@ func (m Manager) removeMember(ctx context.Context, member Member, deleteRemote b
 		return res
 	}
 	bare := m.Index.BarePath(member.Repo)
+	if member.Branch == "" && !headOnBranch(ctx, member.Path) {
+		res.Skipped = "detached HEAD has commits not on any branch; create a branch for them in " + member.Path
+		return res
+	}
 	if _, err := git.Run(ctx, bare, "worktree", "remove", member.Path); err != nil {
 		res.Skipped = "has uncommitted changes or is locked; inspect it with: git -C " + member.Path + " status"
 		return res
@@ -85,15 +90,41 @@ func (m Manager) removeMember(ctx context.Context, member Member, deleteRemote b
 		res.BranchKept = "checked out at " + holder
 		return res
 	}
-	if safe, why := branchIsSafe(ctx, bare, member.Branch, def); !safe {
-		res.BranchKept = why
-	} else if _, err := git.Run(ctx, bare, "branch", "-D", member.Branch); err != nil {
-		res.BranchKept = err.Error()
-	} else {
-		res.BranchDeleted = true
+
+	base := "origin/" + def
+	remote := "origin/" + member.Branch
+	hasRemote := git.RemoteBranchExists(ctx, bare, member.Branch)
+	// origin/<branch> may only be deleted when its commits are merged or
+	// kept in the local branch.
+	removeRemote := false
+	if deleteRemote && hasRemote {
+		if merged, _ := git.Merged(ctx, bare, base, remote); merged || git.IsAncestor(ctx, bare, remote, member.Branch) {
+			removeRemote = true
+		} else {
+			res.RemoteError = fmt.Errorf("it has commits not in the local branch or %s", base)
+		}
+	}
+	// The local branch may only be deleted when its commits are merged, or
+	// pushed to an origin/<branch> that is not about to be deleted.
+	pushed := hasRemote && !removeRemote && git.IsAncestor(ctx, bare, member.Branch, remote)
+	merged := false
+	if !pushed {
+		merged, _ = git.Merged(ctx, bare, base, member.Branch)
+	}
+	switch {
+	case merged || pushed:
+		if _, err := git.Run(ctx, bare, "branch", "-D", member.Branch); err != nil {
+			res.BranchKept = err.Error()
+		} else {
+			res.BranchDeleted = true
+		}
+	case removeRemote && git.IsAncestor(ctx, bare, member.Branch, remote):
+		res.BranchKept = "not merged into " + base + ", and " + remote + " is being deleted"
+	default:
+		res.BranchKept = "has commits not pushed or merged into " + base
 	}
 
-	if deleteRemote && git.RemoteBranchExists(ctx, bare, member.Branch) {
+	if removeRemote {
 		if _, err := git.Run(ctx, bare, "push", "-q", "origin", "--delete", member.Branch); err != nil {
 			res.RemoteError = err
 		} else {
@@ -103,15 +134,12 @@ func (m Manager) removeMember(ctx context.Context, member Member, deleteRemote b
 	return res
 }
 
-// branchIsSafe reports whether deleting the local branch loses no commits.
-func branchIsSafe(ctx context.Context, bare, branch, def string) (bool, string) {
-	if git.RemoteBranchExists(ctx, bare, branch) && git.IsAncestor(ctx, bare, branch, "origin/"+branch) {
-		return true, ""
-	}
-	if merged, _ := git.Merged(ctx, bare, "origin/"+def, branch); merged {
-		return true, ""
-	}
-	return false, "has commits not pushed or merged into origin/" + def
+// headOnBranch reports whether the HEAD of the worktree at path is contained
+// in a local or remote-tracking branch, so removing the worktree loses no
+// commits.
+func headOnBranch(ctx context.Context, path string) bool {
+	out, err := git.Run(ctx, path, "for-each-ref", "--count=1", "--contains", "HEAD", "--format=%(refname)", "refs/heads", "refs/remotes")
+	return err == nil && out != ""
 }
 
 // RemoveDir deletes the workspace directory if it is empty. Otherwise it

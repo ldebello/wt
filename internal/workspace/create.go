@@ -151,6 +151,7 @@ func (m Manager) planOne(ctx context.Context, ws Workspace, spec Spec, opts Opti
 	switch {
 	case git.LocalBranchExists(ctx, bare, step.Branch):
 		step.Action = CheckoutLocal
+		step.Note = ignoredFrom(opts.From, "it already exists")
 		if git.RemoteBranchExists(ctx, bare, step.Branch) {
 			remote := "refs/remotes/origin/" + step.Branch
 			local := "refs/heads/" + step.Branch
@@ -163,6 +164,7 @@ func (m Manager) planOne(ctx context.Context, ws Workspace, spec Spec, opts Opti
 		}
 	case git.RemoteBranchExists(ctx, bare, step.Branch):
 		step.Action = TrackRemote
+		step.Note = ignoredFrom(opts.From, "it exists on origin")
 	default:
 		step.Action = CreateBranch
 		if step.Start, err = m.startPoint(ctx, spec.Repo, opts.From); err != nil {
@@ -170,6 +172,14 @@ func (m Manager) planOne(ctx context.Context, ws Workspace, spec Spec, opts Opti
 		}
 	}
 	return step, nil
+}
+
+// ignoredFrom notes that --from does not apply to an existing branch.
+func ignoredFrom(from, why string) string {
+	if from == "" {
+		return ""
+	}
+	return "--from " + from + " ignored: " + why
 }
 
 func (m Manager) startPoint(ctx context.Context, repoName, from string) (string, error) {

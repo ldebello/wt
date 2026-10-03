@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -294,16 +295,39 @@ func newWorkspaceListCmd(app *App) *cobra.Command {
 				app.printf("No workspaces yet. Create one with: wt ws <name> --repos <repo,...>\n")
 				return nil
 			}
+			dirty := dirtyMembers(cmd.Context(), list)
 			tw := tabwriter.NewWriter(app.Out, 0, 4, 2, ' ', 0)
 			for _, ws := range list {
-				fmt.Fprintf(tw, "%s\t%s\n", ws.Name, describeMembers(cmd.Context(), ws))
+				fmt.Fprintf(tw, "%s\t%s\n", ws.Name, describeMembers(ws, dirty))
 			}
 			return tw.Flush()
 		},
 	}
 }
 
-func describeMembers(ctx context.Context, ws workspace.Workspace) string {
+// dirtyMembers runs `git status` for every member of every workspace in
+// parallel and returns the paths of the ones with uncommitted changes.
+func dirtyMembers(ctx context.Context, list []workspace.Workspace) map[string]bool {
+	var paths []string
+	for _, ws := range list {
+		for _, m := range ws.Members {
+			paths = append(paths, m.Path)
+		}
+	}
+	dirty := map[string]bool{}
+	var mu sync.Mutex
+	repo.ForEach(paths, func(path string) error {
+		if d, _ := git.IsDirty(ctx, path); d {
+			mu.Lock()
+			dirty[path] = true
+			mu.Unlock()
+		}
+		return nil
+	})
+	return dirty
+}
+
+func describeMembers(ws workspace.Workspace, dirty map[string]bool) string {
 	if len(ws.Members) == 0 {
 		return "(empty)"
 	}
@@ -316,7 +340,7 @@ func describeMembers(ctx context.Context, ws workspace.Workspace) string {
 		case m.Branch == "":
 			label = m.Repo + " (detached)"
 		}
-		if dirty, _ := git.IsDirty(ctx, m.Path); dirty {
+		if dirty[m.Path] {
 			label += "*"
 		}
 		parts[i] = label
@@ -409,8 +433,8 @@ func removeWorkspace(ctx context.Context, app *App, name string, repos []string,
 }
 
 // performRemoval removes targets from ws, then either refreshes the
-// integrations (members remain after a partial removal) or cleans up
-// generated files and deletes the workspace directory.
+// integrations (when members remain) or cleans up generated files and
+// deletes the workspace directory.
 func performRemoval(ctx context.Context, app *App, mgr workspace.Manager, ws workspace.Workspace, targets []workspace.Member, partial, deleteRemote bool) error {
 	name := ws.Name
 	results := mgr.RemoveMembers(ctx, targets, deleteRemote)
@@ -424,11 +448,14 @@ func performRemoval(ctx context.Context, app *App, mgr workspace.Manager, ws wor
 	if err != nil {
 		return err
 	}
-	if partial && len(ws.Members) > 0 {
-		return runWorkspaceHooks(ctx, app, ws)
-	}
 	if len(ws.Members) > 0 {
-		app.printf("Kept %s: some repositories could not be removed (see above).\n", ws.Path)
+		if !partial {
+			app.printf("Kept %s: some repositories could not be removed (see above).\n", ws.Path)
+		}
+		// Refresh the generated files for the repositories that remain.
+		if slices.ContainsFunc(results, func(r workspace.RemoveResult) bool { return r.Removed }) {
+			return runWorkspaceHooks(ctx, app, ws)
+		}
 		return nil
 	}
 	if err := cleanupWorkspaceHooks(ctx, app, ws); err != nil {

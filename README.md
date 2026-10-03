@@ -158,6 +158,10 @@ When a workspace combines bundles and `--repos`:
   `origin/<branch>`.
 - Remote branches are deleted only by `wt ws remove`, and only after you
   confirm (or pass `--delete-remote`). `wt cleanup` never deletes them.
+  `origin/<branch>` is kept if it has commits that are neither merged nor in
+  the local branch, and a local branch whose only other copy is the
+  `origin/<branch>` being deleted is kept.
+- A detached worktree whose commits are on no branch is never removed.
 - `wt sync` moves a primary checkout only when it is clean, detached, and
   contains no commits of its own.
 

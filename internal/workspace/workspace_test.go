@@ -186,9 +186,9 @@ func TestCreateLocalBranchAndFrom(t *testing.T) {
 
 	// Remove the worktree but keep the branch: re-adding checks it out.
 	testutil.Git(t, f.ix.BarePath("app"), "worktree", "remove", filepath.Join(f.m.Path("W"), "app"))
-	steps = f.create(t, "W", []Spec{{"app", ""}}, Options{})
-	if steps[0].Action != CheckoutLocal {
-		t.Errorf("action = %v", steps[0].Action)
+	steps = f.create(t, "W", []Spec{{"app", ""}}, Options{From: "release"})
+	if steps[0].Action != CheckoutLocal || !strings.Contains(steps[0].Describe(), "--from release ignored") {
+		t.Errorf("step = %+v", steps[0])
 	}
 
 	if _, err := f.m.Plan(ctx, "X", []Spec{{"app", ""}}, Options{From: "nope"}); err == nil || !strings.Contains(err.Error(), `base branch "nope"`) {
@@ -297,11 +297,15 @@ func TestRemoveMembers(t *testing.T) {
 	if r := byRepo["merged"]; !r.Removed || !r.BranchDeleted {
 		t.Errorf("merged: %+v", r)
 	}
-	if r := byRepo["pushed"]; !r.Removed || !r.BranchDeleted || !r.RemoteDeleted {
+	// pushed: origin/W is deleted, so the local branch is the only copy left.
+	if r := byRepo["pushed"]; !r.Removed || r.BranchDeleted || !r.RemoteDeleted || !strings.Contains(r.BranchKept, "is being deleted") {
 		t.Errorf("pushed: %+v", r)
 	}
 	if testutil.Git(t, f.ups["pushed"], "branch", "--list", "W") != "" {
 		t.Error("origin branch not deleted")
+	}
+	if testutil.Git(t, f.ix.BarePath("pushed"), "branch", "--list", "W") == "" {
+		t.Error("branch whose only other copy was deleted on origin was deleted locally")
 	}
 	if r := byRepo["local"]; !r.Removed || r.BranchDeleted || !strings.Contains(r.BranchKept, "not pushed or merged") {
 		t.Errorf("local: %+v", r)
@@ -367,5 +371,29 @@ func TestCreateFastForwardsLocalBranchBehindOrigin(t *testing.T) {
 	}
 	if got := testutil.Git(t, wt, "rev-parse", "HEAD"); got != local {
 		t.Errorf("diverged branch moved: HEAD = %s", got)
+	}
+}
+
+func TestRemoveKeepsDetachedCommits(t *testing.T) {
+	f := newFixture(t, "app")
+	f.clone(t, "app")
+	f.create(t, "W", []Spec{{"app", ""}}, Options{})
+	wt := filepath.Join(f.m.Path("W"), "app")
+	testutil.Git(t, wt, "checkout", "-q", "--detach")
+	testutil.WriteFile(t, filepath.Join(wt, "d.txt"), "d")
+	testutil.Git(t, wt, "add", "d.txt")
+	testutil.Git(t, wt, "commit", "-q", "-m", "detached work")
+
+	loaded, _ := f.m.Load("W")
+	r := f.m.RemoveMembers(context.Background(), loaded.Members, false)[0]
+	if r.Removed || !strings.Contains(r.Skipped, "not on any branch") {
+		t.Errorf("detached with commits: %+v", r)
+	}
+
+	// Back on a branch-contained commit, it is removed.
+	testutil.Git(t, wt, "checkout", "-q", "--detach", "W")
+	loaded, _ = f.m.Load("W")
+	if r := f.m.RemoveMembers(context.Background(), loaded.Members, false)[0]; !r.Removed {
+		t.Errorf("detached on a branch commit: %+v", r)
 	}
 }

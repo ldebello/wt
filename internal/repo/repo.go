@@ -86,9 +86,22 @@ func (ix Index) List() ([]string, error) {
 
 // NameForGitDir maps a git common dir (e.g. from a worktree) back to an
 // indexed repository name, or "" if it is not part of this index.
+// git records worktree paths with symlinks resolved, so when the index
+// directory is reached through a symlink both sides are resolved before
+// comparing.
 func (ix Index) NameForGitDir(commonDir string) string {
-	if filepath.Dir(commonDir) != filepath.Clean(ix.Dir) || !strings.HasSuffix(commonDir, ".git") {
+	if !strings.HasSuffix(commonDir, ".git") {
 		return ""
+	}
+	if filepath.Dir(commonDir) != filepath.Clean(ix.Dir) {
+		dir, err := filepath.EvalSymlinks(ix.Dir)
+		if err != nil {
+			return ""
+		}
+		resolved, err := filepath.EvalSymlinks(commonDir)
+		if err != nil || filepath.Dir(resolved) != dir {
+			return ""
+		}
 	}
 	return strings.TrimSuffix(filepath.Base(commonDir), ".git")
 }

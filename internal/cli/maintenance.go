@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -28,7 +30,7 @@ left alone. Workspace worktrees are never touched.`,
 			if err != nil {
 				return err
 			}
-			names := args
+			names := slices.Compact(slices.Sorted(slices.Values(args)))
 			if len(names) == 0 {
 				if names, err = ix.List(); err != nil {
 					return err
@@ -112,13 +114,12 @@ Fully merged workspaces are preselected. Removal is the same as
 				}
 			}
 
-			statuses := make([]workspace.Status, len(list))
+			statuses := workspaceStatuses(ctx, mgr, list)
 			options := make([]ui.Option, len(list))
 			var safe []string
 			tw := tabwriter.NewWriter(app.Out, 0, 4, 2, ' ', 0)
 			app.printf("\nWorkspaces:\n")
 			for i, ws := range list {
-				statuses[i] = mgr.Status(ctx, ws)
 				label, ok := statuses[i].Summary()
 				desc := fmt.Sprintf("%s (%s)", ws.Name, strings.Join(ws.RepoNames(), ", "))
 				mark := "[ ]"
@@ -175,6 +176,31 @@ Fully merged workspaces are preselected. Removal is the same as
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "only show the classification")
 	cmd.Flags().BoolVar(&noFetch, "no-fetch", false, "use the current remote-tracking refs instead of fetching")
 	return cmd
+}
+
+// workspaceStatuses inspects the workspaces in parallel (each status runs
+// several git commands per member), in the order of list.
+func workspaceStatuses(ctx context.Context, mgr workspace.Manager, list []workspace.Workspace) []workspace.Status {
+	byName := make(map[string]workspace.Status, len(list))
+	names := make([]string, len(list))
+	index := make(map[string]int, len(list))
+	for i, ws := range list {
+		names[i] = ws.Name
+		index[ws.Name] = i
+	}
+	var mu sync.Mutex
+	repo.ForEach(names, func(name string) error {
+		st := mgr.Status(ctx, list[index[name]])
+		mu.Lock()
+		byName[name] = st
+		mu.Unlock()
+		return nil
+	})
+	out := make([]workspace.Status, len(list))
+	for i, name := range names {
+		out[i] = byName[name]
+	}
+	return out
 }
 
 // usedRepos returns the indexed repositories used by any workspace.

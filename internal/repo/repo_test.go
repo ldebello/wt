@@ -86,6 +86,18 @@ func TestClone(t *testing.T) {
 	if got := ix.NameForGitDir(c.Bare); got != "app" {
 		t.Errorf("NameForGitDir = %q", got)
 	}
+	// git records resolved paths: an index reached through a symlink still
+	// recognizes its repositories.
+	link := filepath.Join(env.Root, "repos-link")
+	if err := os.Symlink(ix.Dir, link); err != nil {
+		t.Fatal(err)
+	}
+	if got := (Index{Dir: link}).NameForGitDir(c.Bare); got != "app" {
+		t.Errorf("NameForGitDir through symlink = %q", got)
+	}
+	if got := ix.NameForGitDir(filepath.Join(env.Root, "other", "app.git")); got != "" {
+		t.Errorf("NameForGitDir outside the index = %q", got)
+	}
 
 	// Name collision is an actionable error; --name works around it.
 	if _, err := ix.Clone(ctx, up, "", io.Discard); err == nil || !strings.Contains(err.Error(), "--name") {

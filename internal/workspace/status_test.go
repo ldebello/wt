@@ -53,6 +53,11 @@ func TestStatusSummary(t *testing.T) {
 	if label, safe := summary("MergeCommit"); label != "merged (safe to remove)" || !safe {
 		t.Errorf("MergeCommit: %q %v", label, safe)
 	}
+	// A local commit on the default branch is work of its own.
+	testutil.Commit(t, filepath.Join(f.m.Path("MergeCommit"), "a"), "main", "v.txt", "v")
+	if label, safe := summary("MergeCommit"); label != "contains unpushed commits" || safe {
+		t.Errorf("MergeCommit with a commit on main: %q %v", label, safe)
+	}
 
 	f.create(t, "Local", []Spec{{"a", ""}}, Options{})
 	testutil.Commit(t, filepath.Join(f.m.Path("Local"), "a"), "Local", "y.txt", "y")
