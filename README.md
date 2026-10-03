@@ -45,7 +45,7 @@ eval "$(wt shell-init bash)"    # ~/.bashrc
 wt shell-init fish | source     # ~/.config/fish/config.fish
 ```
 
-Run `wt doctor` to check the setup.
+Run `wt check` to verify the setup.
 
 ## Quick start
 
@@ -85,7 +85,7 @@ wt cleanup
 | `wt sync [repo...]` | Fetch every repository in parallel and update the primary checkouts |
 | `wt cleanup` | Classify workspaces and remove the merged ones you select |
 | `wt integrations [codegraph \| harness <name>]` | List integrations, or enable one (`--disable` turns it off) |
-| `wt doctor [--fix]` | Health checks, with repairs for common problems |
+| `wt check [--fix]` | Health checks, with repairs for common problems |
 | `wt shell-init <zsh\|bash\|fish>` / `wt completion <shell>` | Shell integration and completion |
 
 `wt ws <name>` and `wt bundle <name>` without `--repos`/`--bundles` open an
@@ -250,7 +250,7 @@ If one fails, `wt` prints a warning and the workspace is still ready.
 
 - **codegraph** indexes the whole workspace as one project. The first run
   uses `codegraph init`; later runs use `codegraph sync`. It needs
-  [CodeGraph](https://github.com/colbymchenry/codegraph) on `PATH`; `wt doctor`
+  [CodeGraph](https://github.com/colbymchenry/codegraph) on `PATH`; `wt check`
   shows whether it is installed and how to set it up:
 
   ```bash
@@ -285,6 +285,6 @@ Code layout:
 - `internal/repo`: repository index, clone and sync.
 - `internal/workspace`: plan/apply, remove and status.
 - `internal/integration`: the integrations.
-- `internal/doctor`: health checks.
+- `internal/check`: health checks.
 - `internal/cli`: cobra commands.
 - `internal/ui`: prompts built on charmbracelet/huh.

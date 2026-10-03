@@ -37,7 +37,7 @@ checkout, and builds workspaces (~/workspaces/<name>/) out of git worktrees.`,
 		newIntegrationsCmd(app),
 		newSyncCmd(app),
 		newCleanupCmd(app),
-		newDoctorCmd(app),
+		newCheckCmd(app),
 	)
 	return root
 }

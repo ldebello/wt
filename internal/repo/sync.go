@@ -46,7 +46,7 @@ func (ix Index) RefreshPrimary(ctx context.Context, name string) (string, error)
 func (ix Index) updatePrimary(ctx context.Context, name, def string) (string, error) {
 	primary := ix.PrimaryPath(name)
 	if _, err := os.Stat(primary); err != nil {
-		return "primary checkout missing (run 'wt doctor --fix')", nil
+		return "primary checkout missing (run 'wt check --fix')", nil
 	}
 	target := "origin/" + def
 	if dirty, err := git.IsDirty(ctx, primary); err != nil {

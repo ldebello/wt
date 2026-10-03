@@ -118,7 +118,7 @@ func DefaultBranch(ctx context.Context, dir string) (string, error) {
 			return b, nil
 		}
 	}
-	return "", errors.New("cannot determine the default branch: origin/HEAD is not set (run 'wt sync' or 'wt doctor --fix')")
+	return "", errors.New("cannot determine the default branch: origin/HEAD is not set (run 'wt sync' or 'wt check --fix')")
 }
 
 // ValidBranchName reports whether name is a valid branch name.

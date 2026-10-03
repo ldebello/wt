@@ -1,5 +1,5 @@
-// Package doctor runs health checks and optional fixes.
-package doctor
+// Package check runs health checks and optional fixes.
+package check
 
 import (
 	"context"
@@ -202,7 +202,7 @@ func checkRepo(ctx context.Context, ix repo.Index, name string) []Finding {
 				return err
 			}
 		} else {
-			f.Hint = primary + " exists but is not a checkout; move it away and run wt doctor --fix"
+			f.Hint = primary + " exists but is not a checkout; move it away and run wt check --fix"
 		}
 		add(f)
 	}

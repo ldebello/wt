@@ -9,13 +9,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ldebello/wt/internal/doctor"
+	"github.com/ldebello/wt/internal/check"
 )
 
-func newDoctorCmd(app *App) *cobra.Command {
+func newCheckCmd(app *App) *cobra.Command {
 	var fix bool
 	cmd := &cobra.Command{
-		Use:   "doctor",
+		Use:   "check",
 		Short: "Check git, repositories, workspaces, editor, integrations and shell setup",
 		Long: `Run health checks. Problems marked (fixable) can be repaired with --fix:
 missing origin/HEAD, fetch refspec, stale worktree registrations and missing
@@ -23,11 +23,11 @@ primary checkouts.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			in, err := doctorInputs(app)
+			in, err := checkInputs(app)
 			if err != nil {
 				return err
 			}
-			findings := doctor.Run(ctx, in)
+			findings := check.Run(ctx, in)
 			if fix {
 				fixed := 0
 				for _, f := range findings {
@@ -41,7 +41,7 @@ primary checkouts.`,
 					}
 				}
 				app.printf("Applied %d fixes.\n\n", fixed)
-				findings = doctor.Run(ctx, in)
+				findings = check.Run(ctx, in)
 			}
 			return reportFindings(ctx, app, findings)
 		},
@@ -50,19 +50,19 @@ primary checkouts.`,
 	return cmd
 }
 
-func doctorInputs(app *App) (doctor.Inputs, error) {
+func checkInputs(app *App) (check.Inputs, error) {
 	if _, err := app.Config(); err != nil {
-		return doctor.Inputs{}, fmt.Errorf("settings: %w", err)
+		return check.Inputs{}, fmt.Errorf("settings: %w", err)
 	}
 	mgr, err := app.Workspaces()
 	if err != nil {
-		return doctor.Inputs{}, err
+		return check.Inputs{}, err
 	}
 	integrations, err := app.integrations()
 	if err != nil {
-		return doctor.Inputs{}, err
+		return check.Inputs{}, err
 	}
-	return doctor.Inputs{
+	return check.Inputs{
 		Index:        mgr.Index,
 		Workspaces:   mgr,
 		Integrations: integrations,
@@ -71,7 +71,7 @@ func doctorInputs(app *App) (doctor.Inputs, error) {
 	}, nil
 }
 
-func reportFindings(_ context.Context, app *App, findings []doctor.Finding) error {
+func reportFindings(_ context.Context, app *App, findings []check.Finding) error {
 	tw := tabwriter.NewWriter(app.Out, 0, 4, 2, ' ', 0)
 	errors, fixable := 0, 0
 	for _, f := range findings {
@@ -86,13 +86,13 @@ func reportFindings(_ context.Context, app *App, findings []doctor.Finding) erro
 				fmt.Fprintf(tw, "\t\t  %s\n", line)
 			}
 		}
-		if f.Level == doctor.Error {
+		if f.Level == check.Error {
 			errors++
 		}
 	}
 	tw.Flush()
 	if fixable > 0 {
-		app.printf("\nRun 'wt doctor --fix' to repair %d problem(s).\n", fixable)
+		app.printf("\nRun 'wt check --fix' to repair %d problem(s).\n", fixable)
 	}
 	if errors > 0 {
 		return fmt.Errorf("%d problem(s) found", errors)

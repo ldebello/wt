@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// shellInitEnv is exported by the shell integration so `wt doctor` can tell
+// shellInitEnv is exported by the shell integration so `wt check` can tell
 // whether it is loaded.
 const shellInitEnv = "WT_SHELL_INIT"
 
