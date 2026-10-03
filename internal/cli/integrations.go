@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -92,7 +93,7 @@ func listIntegrations(app *App) error {
 		}
 		if i.Enabled() {
 			if err := i.Check(); err != nil {
-				detail = "problem: " + err.Error()
+				detail = "problem: " + strings.SplitN(err.Error(), "\n", 2)[0] + " (see wt doctor)"
 			}
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", i.Name(), state, detail)

@@ -84,14 +84,7 @@ func Run(ctx context.Context, in Inputs) []Finding {
 		}
 	}
 	for _, i := range in.Integrations {
-		if !i.Enabled() {
-			continue
-		}
-		if err := i.Check(); err != nil {
-			findings = append(findings, Finding{Area: i.Name(), Level: Error, Message: err.Error(), Hint: "fix it or run: wt integrations " + i.Name() + " --disable"})
-		} else {
-			findings = append(findings, ok(i.Name(), "enabled"))
-		}
+		findings = append(findings, checkIntegration(i))
 	}
 	if in.ShellInit == "" {
 		findings = append(findings, Finding{Area: "shell", Level: Warn, Message: "shell integration not loaded ('wt cd' will not work)",
@@ -100,6 +93,26 @@ func Run(ctx context.Context, in Inputs) []Finding {
 		findings = append(findings, ok("shell", "integration loaded ("+in.ShellInit+")"))
 	}
 	return findings
+}
+
+// checkIntegration reports enabled integrations that are broken as errors,
+// and tells how to enable the disabled ones (installing what they need).
+func checkIntegration(i integration.Integration) Finding {
+	err := i.Check()
+	if i.Enabled() {
+		if err != nil {
+			msg, hint, _ := strings.Cut(err.Error(), "\n")
+			if hint == "" {
+				hint = "fix it, or run: wt integrations " + i.Name() + " --disable"
+			}
+			return Finding{Area: i.Name(), Level: Error, Message: msg, Hint: hint}
+		}
+		return ok(i.Name(), "enabled")
+	}
+	if _, isCodegraph := i.(*integration.Codegraph); isCodegraph && err != nil {
+		return Finding{Area: i.Name(), Level: OK, Message: "not installed (optional: indexes each workspace for cross-repo navigation)", Hint: integration.InstallHint}
+	}
+	return Finding{Area: i.Name(), Level: OK, Message: "disabled", Hint: "enable: wt integrations " + i.Name()}
 }
 
 var gitVersionRE = regexp.MustCompile(`(\d+)\.(\d+)`)

@@ -33,15 +33,19 @@ func TestWorkspaceLifecycle(t *testing.T) {
 		}
 	}
 
-	// Interactive add: picker offers all repos with members preselected.
-	fake := &fakeUI{multi: [][]string{{"api", "web", "tools"}}}
-	r = mustRun(t, env, fake, "workspace", "DOM-1", "--repos")
-	if !strings.Contains(r.out, "tools") || !strings.Contains(r.out, "left untouched") {
+	// Without --repos/--bundles the picker opens, with members preselected.
+	// Members stay untouched even if deselected.
+	fake := &fakeUI{multi: [][]string{{"repo:tools"}}}
+	r = mustRun(t, env, fake, "workspace", "DOM-1")
+	if !strings.Contains(r.out, "tools") || strings.Contains(r.out, "api") {
 		t.Errorf("unexpected output:\n%s", r.out)
 	}
 	// Sorted: api, tools, web.
-	if opts := fake.offered[0]; len(opts) != 3 || !opts[0].Selected || opts[1].Selected || !opts[2].Selected {
+	if opts := fake.offered[0]; len(opts) != 3 || !opts[0].Selected || opts[1].Selected || !opts[2].Selected || opts[0].Value != "repo:api" {
 		t.Errorf("picker options: %+v", opts)
+	}
+	if fake.asked[0] != "Add to workspace DOM-1" {
+		t.Errorf("asked %v", fake.asked)
 	}
 
 	testutil.WriteFile(t, wsPath(env, "DOM-1", "web", "dirty.txt"), "x")
@@ -116,12 +120,26 @@ func TestWorkspaceErrors(t *testing.T) {
 		t.Error("workspace created despite errors")
 	}
 	r = run(t, env, nil, "ws", "W", "--repos")
-	if r.e == nil || !strings.Contains(r.e.Error(), "terminal") {
+	if r.e == nil || !strings.Contains(r.e.Error(), "flag needs an argument") {
+		t.Errorf("expected missing value error, got %v", r.e)
+	}
+	r = run(t, env, nil, "ws", "W")
+	if r.e == nil || !strings.Contains(r.e.Error(), "pass --repos") {
 		t.Errorf("expected no-TTY error, got %v", r.e)
 	}
 
-	r = mustRun(t, env, nil, "ws", "Empty")
+	// Picking nothing creates an empty workspace.
+	r = mustRun(t, env, &fakeUI{multi: [][]string{{}}}, "ws", "Empty")
 	if !strings.Contains(r.out, "(empty; add repositories") {
 		t.Errorf("output:\n%s", r.out)
+	}
+}
+
+func TestWorkspaceRepeatedRepos(t *testing.T) {
+	env := setupRepos(t, "api", "web", "tools")
+	mustRun(t, env, nil, "ws", "W", "--repos", "api", "--repos", "web@main,tools")
+	r := mustRun(t, env, nil, "ws", "list")
+	if !strings.Contains(r.out, "api@W  tools@W  web@main") {
+		t.Errorf("list:\n%s", r.out)
 	}
 }

@@ -20,9 +20,14 @@ type Codegraph struct {
 func (c *Codegraph) Name() string  { return "codegraph" }
 func (c *Codegraph) Enabled() bool { return c.enabled }
 
+// InstallHint explains how to install and enable CodeGraph.
+const InstallHint = `install: npm install -g @colbymchenry/codegraph   (docs: https://github.com/colbymchenry/codegraph)
+then:    codegraph telemetry off   (optional)
+enable:  wt integrations codegraph`
+
 func (c *Codegraph) Check() error {
 	if _, err := exec.LookPath("codegraph"); err != nil {
-		return errors.New("'codegraph' was not found in PATH; install it from https://github.com/colbymchenry/codegraph")
+		return errors.New("'codegraph' was not found in PATH\n" + InstallHint)
 	}
 	return nil
 }

@@ -68,10 +68,10 @@ wt cleanup
 | Command | What it does |
 |---|---|
 | `wt clone <url> [--name alias]` | Add a repository: bare clone plus primary checkout |
-| `wt workspace <name> [--repos ...] [--bundles ...]` | Create a workspace or add repositories to it (alias: `ws`) |
+| `wt workspace <name> [--repos ...] [--bundles ...]` | Create a workspace or add repositories to it (alias: `ws`); without flags, pick interactively |
 | `wt ws list` | List workspaces as `repo@branch` (`*` = uncommitted changes) |
 | `wt ws remove <name> [--repos ...]` | Remove a workspace, or only some of its repositories |
-| `wt bundle <name> --repos ...` | Create or update a bundle (`wt bundle <name>` shows it) |
+| `wt bundle <name> [--repos ...]` | Create or update a bundle; without `--repos`, pick interactively |
 | `wt bundle list` / `wt bundle remove <name>` | List or delete bundles |
 | `wt cd [target]` | `cd` into a workspace, `<workspace>/<repo>`, or a primary checkout |
 | `wt open [target]` | Open the same targets in your editor |
@@ -81,14 +81,19 @@ wt cleanup
 | `wt doctor [--fix]` | Health checks, with repairs for common problems |
 | `wt shell-init <zsh\|bash\|fish>` / `wt completion <shell>` | Shell integration and completion |
 
-Pass `--repos` or `--bundles` with no value to choose interactively. The
-same picker opens for `wt cd` and `wt open` without an argument.
+`wt ws <name>` and `wt bundle <name>` without `--repos`/`--bundles` open an
+interactive picker, as do `wt cd` and `wt open` without an argument. When the
+list mixes kinds (bundles and repositories, or workspaces and repositories),
+press `ctrl+t` to cycle between showing all of them or only one kind;
+selections are kept while switching. `--repos` and `--bundles` always take a
+value: comma-separated, or repeat the flag (`--repos a --repos b@main`).
 
 ### Workspaces and branches
 
 `--repos` takes `repo` or `repo@branch`, comma-separated:
 
 ```bash
+wt ws DOM-12345                                   # pick bundles and repositories
 wt ws DOM-12345 --repos domino                    # branch DOM-12345
 wt ws DOM-12345 --repos domino@main,cws@dev,web   # explicit branches
 wt ws DOM-12345 --repos web --from release-2.4    # new branches start from release-2.4
@@ -199,7 +204,14 @@ If one fails, `wt` prints a warning and the workspace is still ready.
 
 - **codegraph** indexes the whole workspace as one project. The first run
   uses `codegraph init`; later runs use `codegraph sync`. It needs
-  [CodeGraph](https://github.com/colbymchenry/codegraph) on `PATH`.
+  [CodeGraph](https://github.com/colbymchenry/codegraph) on `PATH`; `wt doctor`
+  shows whether it is installed and how to set it up:
+
+  ```bash
+  npm install -g @colbymchenry/codegraph
+  codegraph telemetry off          # optional
+  wt integrations codegraph
+  ```
 - **harness** writes an instruction file for AI agents at the workspace
   root:
   - `claude` writes `CLAUDE.md`; `generic` writes `AGENTS.md`.

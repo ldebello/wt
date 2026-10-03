@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -80,8 +81,10 @@ func reportFindings(_ context.Context, app *App, findings []doctor.Finding) erro
 			fixable++
 		}
 		fmt.Fprintf(tw, "[%s]\t%s\t%s\n", f.Level, f.Area, msg)
-		if f.Hint != "" {
-			fmt.Fprintf(tw, "\t\t  %s\n", f.Hint)
+		for _, line := range strings.Split(f.Hint, "\n") {
+			if line != "" {
+				fmt.Fprintf(tw, "\t\t  %s\n", line)
+			}
 		}
 		if f.Level == doctor.Error {
 			errors++

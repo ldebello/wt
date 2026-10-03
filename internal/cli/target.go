@@ -59,10 +59,10 @@ func pickTarget(app *App) (string, error) {
 	}
 	var options []ui.Option
 	for _, ws := range list {
-		options = append(options, ui.Option{Label: fmt.Sprintf("%s  (workspace: %s)", ws.Name, strings.Join(ws.RepoNames(), ", ")), Value: ws.Path})
+		options = append(options, ui.Option{Label: fmt.Sprintf("%s  (workspace: %s)", ws.Name, strings.Join(ws.RepoNames(), ", ")), Value: ws.Path, Group: "workspaces"})
 	}
 	for _, r := range repos {
-		options = append(options, ui.Option{Label: r + "  (repository)", Value: mgr.Index.PrimaryPath(r)})
+		options = append(options, ui.Option{Label: r + "  (repository)", Value: mgr.Index.PrimaryPath(r), Group: "repositories"})
 	}
 	if len(options) == 0 {
 		return "", errors.New("no workspaces or repositories yet; start with: wt clone <url>")

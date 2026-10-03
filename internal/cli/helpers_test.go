@@ -64,7 +64,7 @@ func run(t *testing.T, env *testutil.Env, prompter ui.Prompter, args ...string) 
 	var out, errOut bytes.Buffer
 	app := &App{Out: &out, Err: &errOut, UI: prompter, Home: env.WTHome}
 	root := NewRootCmd(app, "test")
-	root.SetArgs(PrepareArgs(args))
+	root.SetArgs(args)
 	e := root.ExecuteContext(context.Background())
 	return result{out: out.String(), err: errOut.String(), e: e}
 }

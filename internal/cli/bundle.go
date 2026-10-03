@@ -24,40 +24,26 @@ func newBundleCmd(app *App) *cobra.Command {
 		Short: "Create, update or show a bundle of repositories",
 		Long: `A bundle is a named set of repositories (optionally with a branch) that you
 add to workspaces together with 'wt ws <name> --bundles <bundle>'. Bundles
-are stored in settings.toml under [bundles.<name>].`,
-		Example: `  wt bundle backend --repos domino,cws@main
-  wt bundle backend --repos     # pick repositories interactively
-  wt bundle backend             # show the bundle`,
+are stored in settings.toml under [bundles.<name>].
+
+Without --repos, pick the repositories interactively (the current ones are
+preselected). --repos takes comma-separated values and can be repeated.`,
+		Example: `  wt bundle backend                        # pick repositories
+  wt bundle backend --repos domino,cws@main
+  wt bundle list                           # show every bundle`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			name := args[0]
-			if !cmd.Flags().Changed("repos") {
-				return showBundle(app, name)
-			}
-			return saveBundle(app, name, repos, len(repos) == 0)
+			return saveBundle(app, args[0], repos, !cmd.Flags().Changed("repos"))
 		},
 	}
-	cmd.Flags().StringSliceVar(&repos, "repos", nil, "repositories in the bundle: repo or repo@branch, comma-separated (no value: pick interactively)")
+	cmd.Flags().StringSliceVar(&repos, "repos", nil, "repositories in the bundle: repo or repo@branch (comma-separated, repeatable)")
 	cmd.ValidArgsFunction = completeFirstArg(app.bundleNames)
 	registerListCompletion(cmd, "repos", func([]string) []string { return app.repoNames() })
 	cmd.AddCommand(newBundleListCmd(app), newBundleRemoveCmd(app))
 	return cmd
-}
-
-func showBundle(app *App, name string) error {
-	cfg, err := app.Config()
-	if err != nil {
-		return err
-	}
-	b, ok := cfg.Bundles[name]
-	if !ok {
-		return fmt.Errorf("unknown bundle %q; create it with: wt bundle %s --repos <repo,...>", name, name)
-	}
-	app.printf("%s: %s\n", name, strings.Join(b.Repos, ", "))
-	return nil
 }
 
 func saveBundle(app *App, name string, items []string, pick bool) error {
@@ -143,6 +129,9 @@ func pickBundleRepos(app *App, ix repo.Index, current config.Bundle) ([]workspac
 		options[i] = ui.Option{Label: label, Value: n, Selected: selected}
 	}
 	picked, err := app.UI.MultiSelect("Repositories in bundle", options)
+	if errors.Is(err, ui.ErrNoTTY) {
+		return nil, errors.New("no terminal to pick from; pass --repos <repo,...>")
+	}
 	if err != nil {
 		return nil, err
 	}

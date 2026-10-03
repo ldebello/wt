@@ -38,8 +38,9 @@ func TestResolveTargets(t *testing.T) {
 	if strings.TrimSpace(r.out) != wsPath(env, "W") {
 		t.Errorf("interactive __cd = %q", r.out)
 	}
-	if labels := fake.offered[0]; len(labels) != 4 || !strings.Contains(labels[0].Label, "workspace: api") {
-		t.Errorf("options: %+v", labels)
+	if opts := fake.offered[0]; len(opts) != 4 || !strings.Contains(opts[0].Label, "workspace: api") ||
+		opts[0].Group != "workspaces" || opts[3].Group != "repositories" {
+		t.Errorf("options: %+v", opts)
 	}
 
 	r = run(t, env, nil, "cd", "W")

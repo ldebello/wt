@@ -18,14 +18,9 @@ func TestBundleLifecycle(t *testing.T) {
 	if !strings.Contains(r.out, "backend   api, db@v1") || !strings.Contains(r.out, "frontend  web, db@v2") {
 		t.Errorf("list:\n%s", r.out)
 	}
-	r = mustRun(t, env, nil, "bundle", "backend")
-	if strings.TrimSpace(r.out) != "backend: api, db@v1" {
-		t.Errorf("show:\n%s", r.out)
-	}
-
-	// Interactive update keeps pinned branches of preselected repos.
+	// Without --repos the picker opens; pinned branches of kept repos survive.
 	fake := &fakeUI{multi: [][]string{{"db", "web"}}}
-	r = mustRun(t, env, fake, "bundle", "backend", "--repos")
+	r = mustRun(t, env, fake, "bundle", "backend")
 	if !strings.Contains(r.out, "Updated bundle backend: db@v1, web") {
 		t.Errorf("output:\n%s", r.out)
 	}
@@ -74,11 +69,16 @@ func TestWorkspaceWithBundles(t *testing.T) {
 		t.Errorf("list:\n%s", r.out)
 	}
 
-	// Interactive bundle selection.
-	fake := &fakeUI{multi: [][]string{{"frontend"}}}
-	mustRun(t, env, fake, "ws", "V", "--bundles")
-	if fake.asked[0] != "Bundles" {
-		t.Errorf("asked %v", fake.asked)
+	// The picker offers bundles and repositories, grouped for filtering.
+	fake := &fakeUI{multi: [][]string{{"bundle:frontend", "repo:tools"}}}
+	mustRun(t, env, fake, "ws", "V")
+	opts := fake.offered[0]
+	if len(opts) != 6 || opts[0].Value != "bundle:backend" || opts[0].Group != "bundles" || opts[2].Group != "repositories" {
+		t.Errorf("options: %+v", opts)
+	}
+	r = mustRun(t, env, nil, "ws", "list")
+	if !strings.Contains(r.out, "V  db@other  tools@V  web@V") {
+		t.Errorf("list:\n%s", r.out)
 	}
 
 	if r := run(t, env, nil, "ws", "X", "--bundles", "nope"); r.e == nil || !strings.Contains(r.e.Error(), "unknown bundle") {

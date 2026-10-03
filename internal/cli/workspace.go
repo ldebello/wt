@@ -30,31 +30,33 @@ func newWorkspaceCmd(app *App) *cobra.Command {
 		Long: `Create ~/workspaces/<name>/ or add repositories to it, one git worktree per
 repository. Repositories already in the workspace are left untouched.
 
+Without --repos or --bundles, pick bundles and repositories interactively.
+--repos and --bundles take comma-separated values and can be repeated.
+
 A repository without @branch uses the workspace name as branch: an existing
 local branch, else origin/<name>, else a new branch from origin/<default>
-(or --from). Pass --repos or --bundles without a value to pick interactively.`,
-		Example: `  wt ws DOM-12345 --repos domino,cws@main
-  wt ws DOM-12345 --bundles backend --repos web@feature/foo
-  wt ws DOM-12345 --repos              # pick repositories interactively`,
+(or --from).`,
+		Example: `  wt ws DOM-12345                      # pick bundles and repositories
+  wt ws DOM-12345 --repos domino,cws@main
+  wt ws DOM-12345 --bundles backend --repos web@feature/foo --repos tools`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
 			req := createRequest{
-				name:        args[0],
-				repos:       repos,
-				bundles:     bundles,
-				pickRepos:   cmd.Flags().Changed("repos") && len(repos) == 0,
-				pickBundles: cmd.Flags().Changed("bundles") && len(bundles) == 0,
-				opts:        workspace.Options{From: from},
-				fetch:       fetch,
+				name:    args[0],
+				repos:   repos,
+				bundles: bundles,
+				pick:    !cmd.Flags().Changed("repos") && !cmd.Flags().Changed("bundles"),
+				opts:    workspace.Options{From: from},
+				fetch:   fetch,
 			}
 			return createWorkspace(cmd.Context(), app, req)
 		},
 	}
-	cmd.Flags().StringSliceVar(&repos, "repos", nil, "repositories to add: repo or repo@branch, comma-separated (no value: pick interactively)")
-	cmd.Flags().StringSliceVar(&bundles, "bundles", nil, "bundles to add, comma-separated (no value: pick interactively)")
+	cmd.Flags().StringSliceVar(&repos, "repos", nil, "repositories to add: repo or repo@branch (comma-separated, repeatable)")
+	cmd.Flags().StringSliceVar(&bundles, "bundles", nil, "bundles to add (comma-separated, repeatable)")
 	cmd.Flags().StringVar(&from, "from", "", "base for newly created branches instead of the default branch")
 	cmd.Flags().BoolVar(&fetch, "fetch", false, "fetch the repositories before resolving branches")
 	cmd.ValidArgsFunction = completeFirstArg(app.workspaceNames)
@@ -65,11 +67,11 @@ local branch, else origin/<name>, else a new branch from origin/<default>
 }
 
 type createRequest struct {
-	name                   string
-	repos, bundles         []string
-	pickRepos, pickBundles bool
-	opts                   workspace.Options
-	fetch                  bool
+	name           string
+	repos, bundles []string
+	pick           bool // no --repos/--bundles: choose interactively
+	opts           workspace.Options
+	fetch          bool
 }
 
 func createWorkspace(ctx context.Context, app *App, req createRequest) error {
@@ -83,7 +85,12 @@ func createWorkspace(ctx context.Context, app *App, req createRequest) error {
 	if err != nil {
 		return err
 	}
-	specs, err := resolveSpecs(app, mgr, req)
+	if req.pick {
+		if req.repos, req.bundles, err = pickWorkspaceContents(app, mgr, req.name); err != nil {
+			return err
+		}
+	}
+	specs, err := resolveSpecs(app, req)
 	if err != nil {
 		return err
 	}
@@ -115,7 +122,7 @@ func createWorkspace(ctx context.Context, app *App, req createRequest) error {
 	app.printf("Workspace %s: %s\n", req.name, mgr.Path(req.name))
 	if len(steps) == 0 {
 		if created {
-			app.printf("  (empty; add repositories with: wt ws %s --repos <repo,...>)\n", req.name)
+			app.printf("  (empty; add repositories with: wt ws %s)\n", req.name)
 		} else {
 			app.printf("  nothing to add\n")
 		}
@@ -138,8 +145,8 @@ func createWorkspace(ctx context.Context, app *App, req createRequest) error {
 	return runWorkspaceHooks(ctx, app, ws)
 }
 
-// resolveSpecs turns --repos/--bundles (or interactive picks) into one list.
-func resolveSpecs(app *App, mgr workspace.Manager, req createRequest) ([]workspace.Spec, error) {
+// resolveSpecs merges --repos and --bundles into one list.
+func resolveSpecs(app *App, req createRequest) ([]workspace.Spec, error) {
 	cfg, err := app.Config()
 	if err != nil {
 		return nil, err
@@ -148,32 +155,8 @@ func resolveSpecs(app *App, mgr workspace.Manager, req createRequest) ([]workspa
 	if err != nil {
 		return nil, err
 	}
-	if req.pickRepos {
-		picked, err := pickRepos(app, mgr, req.name)
-		if err != nil {
-			return nil, err
-		}
-		for _, name := range picked {
-			explicit = append(explicit, workspace.Spec{Repo: name})
-		}
-	}
-
-	bundleNames := splitList(req.bundles)
-	if req.pickBundles {
-		names := cfg.BundleNames()
-		if len(names) == 0 {
-			return nil, errors.New("no bundles defined yet; create one with: wt bundle <name> --repos <repo,...>")
-		}
-		options := make([]ui.Option, len(names))
-		for i, n := range names {
-			options[i] = ui.Option{Label: n + "  (" + strings.Join(cfg.Bundles[n].Repos, ", ") + ")", Value: n}
-		}
-		if bundleNames, err = app.UI.MultiSelect("Bundles", options); err != nil {
-			return nil, err
-		}
-	}
 	var bundles []workspace.NamedSpecs
-	for _, name := range bundleNames {
+	for _, name := range splitList(req.bundles) {
 		b, ok := cfg.Bundles[name]
 		if !ok {
 			return nil, fmt.Errorf("unknown bundle %q (see 'wt bundle list')", name)
@@ -192,26 +175,62 @@ func resolveSpecs(app *App, mgr workspace.Manager, req createRequest) ([]workspa
 	return specs, nil
 }
 
-// pickRepos offers every indexed repository, preselecting the ones already in
-// the workspace.
-func pickRepos(app *App, mgr workspace.Manager, wsName string) ([]string, error) {
+const (
+	bundlePrefix = "bundle:"
+	repoPrefix   = "repo:"
+)
+
+// pickWorkspaceContents offers bundles and repositories in one list
+// (filterable by kind). Repositories already in the workspace are shown
+// selected and are left untouched whatever the answer.
+func pickWorkspaceContents(app *App, mgr workspace.Manager, wsName string) (repos, bundles []string, err error) {
+	cfg, err := app.Config()
+	if err != nil {
+		return nil, nil, err
+	}
 	names, err := mgr.Index.List()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(names) == 0 {
-		return nil, errors.New("no repositories in the index yet; add one with: wt clone <url>")
+		return nil, nil, errors.New("no repositories in the index yet; add one with: wt clone <url>")
 	}
 	var current workspace.Workspace
 	if mgr.Exists(wsName) {
 		current, _ = mgr.Load(wsName)
 	}
-	options := make([]ui.Option, len(names))
-	for i, n := range names {
-		_, in := current.Member(n)
-		options[i] = ui.Option{Label: n, Value: n, Selected: in}
+
+	var options []ui.Option
+	for _, n := range cfg.BundleNames() {
+		options = append(options, ui.Option{
+			Label: n + "  (" + strings.Join(cfg.Bundles[n].Repos, ", ") + ")",
+			Value: bundlePrefix + n,
+			Group: "bundles",
+		})
 	}
-	return app.UI.MultiSelect("Repositories", options)
+	for _, n := range names {
+		_, in := current.Member(n)
+		options = append(options, ui.Option{Label: n, Value: repoPrefix + n, Selected: in, Group: "repositories"})
+	}
+
+	title := "Add to workspace " + wsName
+	picked, err := app.UI.MultiSelect(title, options)
+	if errors.Is(err, ui.ErrNoTTY) {
+		return nil, nil, errors.New("no terminal to pick from; pass --repos <repo,...> or --bundles <bundle,...>")
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, v := range picked {
+		if name, ok := strings.CutPrefix(v, bundlePrefix); ok {
+			bundles = append(bundles, name)
+		} else if name, ok := strings.CutPrefix(v, repoPrefix); ok {
+			if _, in := current.Member(name); !in {
+				repos = append(repos, name)
+			}
+		}
+	}
+	return repos, bundles, nil
 }
 
 func newWorkspaceListCmd(app *App) *cobra.Command {
@@ -277,16 +296,14 @@ and a local branch is deleted only if it is merged into origin/<default>
 (squash merges included) or pushed to origin. Remote branches are deleted
 only when confirmed (or with --delete-remote).`,
 		Example: `  wt ws remove DOM-12345
-  wt ws remove DOM-12345 --repos cws        # drop one repository
-  wt ws remove DOM-12345 --repos            # pick repositories interactively`,
+  wt ws remove DOM-12345 --repos cws        # drop one repository`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pick := cmd.Flags().Changed("repos") && len(repos) == 0
 			remoteSet := cmd.Flags().Changed("delete-remote")
-			return removeWorkspace(cmd.Context(), app, args[0], splitList(repos), pick, yes, deleteRemote, remoteSet)
+			return removeWorkspace(cmd.Context(), app, args[0], splitList(repos), yes, deleteRemote, remoteSet)
 		},
 	}
-	cmd.Flags().StringSliceVar(&repos, "repos", nil, "only remove these repositories (no value: pick interactively)")
+	cmd.Flags().StringSliceVar(&repos, "repos", nil, "only remove these repositories (comma-separated, repeatable)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
 	cmd.Flags().BoolVar(&deleteRemote, "delete-remote", false, "also delete the branches on origin")
 	cmd.ValidArgsFunction = completeFirstArg(app.workspaceNames)
@@ -299,7 +316,7 @@ only when confirmed (or with --delete-remote).`,
 	return cmd
 }
 
-func removeWorkspace(ctx context.Context, app *App, name string, repos []string, pick, yes, deleteRemote, remoteSet bool) error {
+func removeWorkspace(ctx context.Context, app *App, name string, repos []string, yes, deleteRemote, remoteSet bool) error {
 	mgr, err := app.Workspaces()
 	if err != nil {
 		return err
@@ -309,18 +326,6 @@ func removeWorkspace(ctx context.Context, app *App, name string, repos []string,
 		return err
 	}
 
-	if pick {
-		options := make([]ui.Option, len(ws.Members))
-		for i, m := range ws.Members {
-			options[i] = ui.Option{Label: m.Repo + "@" + m.Branch, Value: m.Repo}
-		}
-		if repos, err = app.UI.MultiSelect("Repositories to remove", options); err != nil {
-			return err
-		}
-		if len(repos) == 0 {
-			return ui.ErrAborted
-		}
-	}
 	targets := ws.Members
 	partial := len(repos) > 0
 	if partial {
