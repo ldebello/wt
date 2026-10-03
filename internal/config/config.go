@@ -45,13 +45,11 @@ type Toggle struct {
 	Enabled bool `toml:"enabled"`
 }
 
-// Harness generates an AI agent instruction file at the workspace root.
-// "claude" (CLAUDE.md) and "generic" (AGENTS.md) are built in; other names
-// need File.
+// Harness generates an AI agent instruction file at the workspace root:
+// "claude" writes CLAUDE.md, "generic" writes AGENTS.md.
 type Harness struct {
 	Enabled  bool   `toml:"enabled"`
 	Template string `toml:"template,omitempty"` // ~/.wt/templates/<name>.md or a built-in template
-	File     string `toml:"file,omitempty"`     // output file name
 }
 
 // Bundle is a named set of repo specs ("repo" or "repo@branch").

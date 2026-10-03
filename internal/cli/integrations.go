@@ -22,7 +22,7 @@ func newIntegrationsCmd(app *App) *cobra.Command {
 
   codegraph          index the whole workspace with CodeGraph
   harness claude     generate CLAUDE.md at the workspace root
-  harness generic    generate AGENTS.md at the workspace root
+  harness generic    generate AGENTS.md at the workspace root (other agents)
 
 Generated files start with a marker line; delete it to keep your edits.`,
 		Args: cobra.NoArgs,
@@ -45,14 +45,14 @@ Generated files start with a marker line; delete it to keep your edits.`,
 	codegraph.Flags().BoolVar(&disableCodegraph, "disable", false, "disable instead of enable")
 
 	var disableHarness bool
-	var tmpl, file string
+	var tmpl string
 	harness := &cobra.Command{
-		Use:   "harness <claude|generic|name>",
+		Use:   "harness <claude|generic>",
 		Short: "Enable (or --disable) an AI agent instruction file in workspaces",
 		Example: `  wt integrations harness claude
-  wt integrations harness cursor --file RULES.md --template agents`,
-		Args:      cobra.ExactArgs(1),
-		ValidArgs: []string{"claude", "generic"},
+  wt integrations harness generic --template my-agents   # ~/.wt/templates/my-agents.md`,
+		Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
+		ValidArgs: integration.HarnessNames,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			return toggleIntegration(cmd.Context(), app, "harness "+name, !disableHarness, func(cfg *config.Config, on bool) {
@@ -61,16 +61,12 @@ Generated files start with a marker line; delete it to keep your edits.`,
 				if tmpl != "" {
 					h.Template = tmpl
 				}
-				if file != "" {
-					h.File = file
-				}
 				cfg.Integrations.Harness[name] = h
 			})
 		},
 	}
 	harness.Flags().BoolVar(&disableHarness, "disable", false, "disable instead of enable")
 	harness.Flags().StringVar(&tmpl, "template", "", "template name (~/.wt/templates/<name>.md or built-in claude/agents)")
-	harness.Flags().StringVar(&file, "file", "", "generated file name (required for custom harnesses)")
 
 	cmd.AddCommand(codegraph, harness)
 	return cmd

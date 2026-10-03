@@ -24,14 +24,14 @@ func testWorkspace(t *testing.T) Workspace {
 	}
 }
 
-func TestAllListsBuiltinsAndCustomHarnesses(t *testing.T) {
+func TestAllIgnoresUnknownHarnesses(t *testing.T) {
 	cfg := config.Default()
-	cfg.Integrations.Harness = map[string]config.Harness{"cursor": {Enabled: true, File: "RULES.md"}}
+	cfg.Integrations.Harness["cursor"] = config.Harness{Enabled: true}
 	var names []string
 	for _, i := range All(cfg, t.TempDir(), io.Discard) {
 		names = append(names, i.Name())
 	}
-	if got := strings.Join(names, ","); got != "codegraph,harness claude,harness cursor,harness generic" {
+	if got := strings.Join(names, ","); got != "codegraph,harness claude,harness generic" {
 		t.Errorf("names = %s", got)
 	}
 }
@@ -101,16 +101,16 @@ func TestHarnessUserTemplateAndErrors(t *testing.T) {
 	testutil.WriteFile(t, filepath.Join(home, "templates", "mine.md"), "custom {{.Name}}{{range .Repos}} {{.Name}}{{end}}\n")
 	ws := testWorkspace(t)
 
-	h := NewHarness("cursor", config.Harness{Enabled: true, Template: "mine", File: "RULES.md"}, home, false)
+	h := NewHarness("generic", config.Harness{Enabled: true, Template: "mine"}, home, false)
 	if err := h.OnWorkspaceCreated(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(filepath.Join(ws.Path, "RULES.md")); !strings.Contains(string(data), "custom DOM-1 api web") {
-		t.Errorf("RULES.md:\n%s", data)
+	if data, _ := os.ReadFile(filepath.Join(ws.Path, "AGENTS.md")); !strings.Contains(string(data), "custom DOM-1 api web") {
+		t.Errorf("AGENTS.md:\n%s", data)
 	}
 
-	if err := NewHarness("cursor", config.Harness{}, home, false).Check(); err == nil || !strings.Contains(err.Error(), "file =") {
-		t.Errorf("expected missing file error, got %v", err)
+	if err := NewHarness("cursor", config.Harness{}, home, false).Check(); err == nil || !strings.Contains(err.Error(), "unknown harness") {
+		t.Errorf("expected unknown harness error, got %v", err)
 	}
 	if err := NewHarness("claude", config.Harness{Template: "nope"}, home, false).Check(); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected missing template error, got %v", err)

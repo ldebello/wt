@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"io"
-	"sort"
 
 	"github.com/ldebello/wt/internal/config"
 )
@@ -41,21 +40,11 @@ type Integration interface {
 	OnWorkspaceRemoved(ctx context.Context, ws Workspace) error
 }
 
-// All returns every integration known from cfg: codegraph first, then the
-// harnesses sorted by name.
+// All returns every integration: codegraph, then the claude and generic
+// harnesses.
 func All(cfg *config.Config, wtHome string, out io.Writer) []Integration {
 	list := []Integration{&Codegraph{enabled: cfg.Integrations.Codegraph.Enabled, out: out}}
-	names := make([]string, 0, len(cfg.Integrations.Harness))
-	for name := range cfg.Integrations.Harness {
-		names = append(names, name)
-	}
-	for name := range builtinHarnesses {
-		if _, ok := cfg.Integrations.Harness[name]; !ok {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	for _, name := range names {
+	for _, name := range HarnessNames {
 		list = append(list, NewHarness(name, cfg.Integrations.Harness[name], wtHome, cfg.Integrations.Codegraph.Enabled))
 	}
 	return list

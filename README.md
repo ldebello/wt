@@ -231,10 +231,11 @@ If one fails, `wt` prints a warning and the workspace is still ready.
   ```
 - **harness** writes an instruction file for AI agents at the workspace
   root:
-  - `claude` writes `CLAUDE.md`; `generic` writes `AGENTS.md`.
-  - Custom harnesses need a file name:
-    `wt integrations harness cursor --file RULES.md --template agents`.
-  - Templates are Go `text/template` files that can use `.Name`, `.Path`,
+  - `claude` writes `CLAUDE.md`; `generic` writes `AGENTS.md` (read by
+    other coding agents).
+  - To customise the content, put a template in `~/.wt/templates/<name>.md`
+    and select it with `template = "<name>"` (or `--template <name>`).
+    Templates are Go `text/template` files that can use `.Name`, `.Path`,
     `.Repos` (each with `.Name`, `.Branch` and `.Path`) and `.Codegraph`.
 
 Generated files start with a marker line. Delete that line to keep your

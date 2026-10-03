@@ -85,8 +85,7 @@ func TestIntegrationsCommand(t *testing.T) {
 		t.Errorf("generated files left behind:\n%s", r.out)
 	}
 
-	if r := run(t, env, nil, "integrations", "harness", "cursor"); r.e == nil || !strings.Contains(r.e.Error(), "file =") {
-		t.Errorf("custom harness without --file: %v", r.e)
+	if r := run(t, env, nil, "integrations", "harness", "cursor"); r.e == nil || !strings.Contains(r.e.Error(), "invalid argument") {
+		t.Errorf("unknown harness: %v", r.e)
 	}
-	mustRun(t, env, nil, "integrations", "harness", "cursor", "--file", "RULES.md")
 }
