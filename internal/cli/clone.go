@@ -9,8 +9,8 @@ func newCloneCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clone <url>",
 		Short: "Add a repository to the index (bare clone + primary checkout)",
-		Example: `  wt clone git@github.com:cerebrotech/domino.git
-  wt clone https://github.com/other-org/domino.git --name other-domino`,
+		Example: `  wt clone git@github.com:acme/billing.git
+  wt clone https://github.com/other-org/billing.git --name other-billing`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ix, err := app.Index()

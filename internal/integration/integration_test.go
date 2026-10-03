@@ -15,10 +15,10 @@ import (
 func testWorkspace(t *testing.T) Workspace {
 	dir := t.TempDir()
 	return Workspace{
-		Name: "DOM-1",
+		Name: "PROJ-1",
 		Path: dir,
 		Repos: []Repo{
-			{Name: "api", Branch: "DOM-1", Path: filepath.Join(dir, "api")},
+			{Name: "api", Branch: "PROJ-1", Path: filepath.Join(dir, "api")},
 			{Name: "web", Branch: "", Path: filepath.Join(dir, "web")},
 		},
 	}
@@ -48,7 +48,7 @@ func TestHarnessGeneratesAndRespectsEdits(t *testing.T) {
 	}
 	path := filepath.Join(ws.Path, "CLAUDE.md")
 	data, _ := os.ReadFile(path)
-	for _, want := range []string{Marker, "# Workspace DOM-1", "| `api/` | `DOM-1` |", "| `web/` | `(detached)` |", "CodeGraph index"} {
+	for _, want := range []string{Marker, "# Workspace PROJ-1", "| `api/` | `PROJ-1` |", "| `web/` | `(detached)` |", "CodeGraph index"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("CLAUDE.md missing %q:\n%s", want, data)
 		}
@@ -84,7 +84,7 @@ func TestHarnessRemovesGeneratedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(ws.Path, "AGENTS.md"))
-	if strings.Contains(string(data), "CodeGraph") || !strings.Contains(string(data), "`api/` on branch `DOM-1`") {
+	if strings.Contains(string(data), "CodeGraph") || !strings.Contains(string(data), "`api/` on branch `PROJ-1`") {
 		t.Errorf("AGENTS.md:\n%s", data)
 	}
 	if err := h.OnWorkspaceRemoved(ctx, ws); err != nil {
@@ -105,7 +105,7 @@ func TestHarnessUserTemplateAndErrors(t *testing.T) {
 	if err := h.OnWorkspaceCreated(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(filepath.Join(ws.Path, "AGENTS.md")); !strings.Contains(string(data), "custom DOM-1 api web") {
+	if data, _ := os.ReadFile(filepath.Join(ws.Path, "AGENTS.md")); !strings.Contains(string(data), "custom PROJ-1 api web") {
 		t.Errorf("AGENTS.md:\n%s", data)
 	}
 

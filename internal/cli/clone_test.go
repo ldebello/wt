@@ -11,13 +11,13 @@ import (
 
 func TestCloneCommand(t *testing.T) {
 	env := testutil.Setup(t)
-	up := env.NewUpstream(t, "domino", "main")
+	up := env.NewUpstream(t, "billing", "main")
 
 	r := mustRun(t, env, nil, "clone", up)
-	if !strings.Contains(r.out, "Repository domino ready") {
+	if !strings.Contains(r.out, "Repository billing ready") {
 		t.Errorf("unexpected output:\n%s", r.out)
 	}
-	for _, p := range []string{".repos/domino.git", ".repos/domino/README.md"} {
+	for _, p := range []string{".repos/billing.git", ".repos/billing/README.md"} {
 		if _, err := os.Stat(filepath.Join(env.Home, p)); err != nil {
 			t.Errorf("missing %s: %v", p, err)
 		}

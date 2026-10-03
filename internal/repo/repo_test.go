@@ -13,12 +13,12 @@ import (
 
 func TestNameFromURL(t *testing.T) {
 	for url, want := range map[string]string{
-		"git@github.com:cerebrotech/domino.git":     "domino",
-		"https://github.com/cerebrotech/domino.git": "domino",
-		"https://github.com/cerebrotech/domino":     "domino",
-		"https://github.com/cerebrotech/domino/":    "domino",
-		"/tmp/remote/app":                           "app",
-		"git@host:app.git":                          "app",
+		"git@github.com:acme/billing.git":     "billing",
+		"https://github.com/acme/billing.git": "billing",
+		"https://github.com/acme/billing":     "billing",
+		"https://github.com/acme/billing/":    "billing",
+		"/tmp/remote/app":                     "app",
+		"git@host:app.git":                    "app",
 	} {
 		got, err := NameFromURL(url)
 		if err != nil || got != want {
@@ -31,7 +31,7 @@ func TestNameFromURL(t *testing.T) {
 }
 
 func TestValidName(t *testing.T) {
-	for _, ok := range []string{"domino", "DOM-123", "a.b_c"} {
+	for _, ok := range []string{"billing", "PROJ-12", "a.b_c"} {
 		if err := ValidName("x", ok); err != nil {
 			t.Errorf("%q: %v", ok, err)
 		}

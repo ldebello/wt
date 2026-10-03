@@ -113,13 +113,13 @@ func head(t *testing.T, dir string) string {
 
 func TestCreateResolvesBranches(t *testing.T) {
 	f := newFixture(t, "fresh", "remote", "pinned")
-	testutil.Commit(t, f.ups["remote"], "DOM-1", "r.txt", "on remote")
+	testutil.Commit(t, f.ups["remote"], "PROJ-1", "r.txt", "on remote")
 	testutil.Commit(t, f.ups["pinned"], "release", "p.txt", "release")
 	for _, name := range []string{"fresh", "remote", "pinned"} {
 		f.clone(t, name)
 	}
 
-	steps := f.create(t, "DOM-1", []Spec{{"fresh", "", ""}, {"remote", "", ""}, {"pinned", "release", ""}})
+	steps := f.create(t, "PROJ-1", []Spec{{"fresh", "", ""}, {"remote", "", ""}, {"pinned", "release", ""}})
 	actions := []Action{steps[0].Action, steps[1].Action, steps[2].Action}
 	if !reflect.DeepEqual(actions, []Action{CreateBranch, TrackRemote, TrackRemote}) {
 		t.Errorf("actions = %v", actions)
@@ -128,26 +128,26 @@ func TestCreateResolvesBranches(t *testing.T) {
 		t.Errorf("start = %q", steps[0].Start)
 	}
 
-	ws := f.m.Path("DOM-1")
-	if got := head(t, filepath.Join(ws, "fresh")); got != "DOM-1" {
+	ws := f.m.Path("PROJ-1")
+	if got := head(t, filepath.Join(ws, "fresh")); got != "PROJ-1" {
 		t.Errorf("fresh on %s", got)
 	}
 	// A new branch has no upstream (push.autoSetupRemote handles the first push).
 	if out, err := tryGit(filepath.Join(ws, "fresh"), "rev-parse", "--abbrev-ref", "@{u}"); err == nil {
 		t.Errorf("new branch unexpectedly tracks %s", out)
 	}
-	if got := testutil.Git(t, filepath.Join(ws, "remote"), "rev-parse", "--abbrev-ref", "@{u}"); got != "origin/DOM-1" {
+	if got := testutil.Git(t, filepath.Join(ws, "remote"), "rev-parse", "--abbrev-ref", "@{u}"); got != "origin/PROJ-1" {
 		t.Errorf("remote upstream = %s", got)
 	}
 	if got := head(t, filepath.Join(ws, "pinned")); got != "release" {
 		t.Errorf("pinned on %s", got)
 	}
 
-	loaded, err := f.m.Load("DOM-1")
+	loaded, err := f.m.Load("PROJ-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded.Members) != 3 || loaded.Members[0].Repo != "fresh" || loaded.Members[0].Branch != "DOM-1" {
+	if len(loaded.Members) != 3 || loaded.Members[0].Repo != "fresh" || loaded.Members[0].Branch != "PROJ-1" {
 		t.Errorf("Load = %+v", loaded)
 	}
 }
@@ -219,16 +219,16 @@ func TestCreateFromLocalBaseWithOwnCommits(t *testing.T) {
 	f := newFixture(t, "app")
 	f.clone(t, "app")
 
-	// Stack DOM-2 on DOM-1, which has unpushed commits: the local branch is
+	// Stack PROJ-2 on PROJ-1, which has unpushed commits: the local branch is
 	// the base, not origin.
-	f.create(t, "DOM-1", []Spec{{Repo: "app"}})
-	mine := testutil.Commit(t, filepath.Join(f.m.Path("DOM-1"), "app"), "DOM-1", "one.txt", "1")
-	steps := f.create(t, "DOM-2", []Spec{{Repo: "app", Base: "DOM-1"}})
-	if steps[0].Start != "DOM-1" {
+	f.create(t, "PROJ-1", []Spec{{Repo: "app"}})
+	mine := testutil.Commit(t, filepath.Join(f.m.Path("PROJ-1"), "app"), "PROJ-1", "one.txt", "1")
+	steps := f.create(t, "PROJ-2", []Spec{{Repo: "app", Base: "PROJ-1"}})
+	if steps[0].Start != "PROJ-1" {
 		t.Errorf("start = %q", steps[0].Start)
 	}
-	if got := testutil.Git(t, filepath.Join(f.m.Path("DOM-2"), "app"), "rev-parse", "HEAD"); got != mine {
-		t.Errorf("DOM-2 starts at %s; want %s", got, mine)
+	if got := testutil.Git(t, filepath.Join(f.m.Path("PROJ-2"), "app"), "rev-parse", "HEAD"); got != mine {
+		t.Errorf("PROJ-2 starts at %s; want %s", got, mine)
 	}
 }
 

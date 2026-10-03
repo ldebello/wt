@@ -26,8 +26,8 @@ func wsPath(env *testutil.Env, parts ...string) string {
 func TestWorkspaceLifecycle(t *testing.T) {
 	env := setupRepos(t, "api", "web", "tools")
 
-	r := mustRun(t, env, nil, "ws", "DOM-1", "--repos", "api,web@main")
-	for _, want := range []string{"Workspace DOM-1", "api", "new branch DOM-1 from origin/main", "web", "branch main tracking origin/main"} {
+	r := mustRun(t, env, nil, "ws", "PROJ-1", "--repos", "api,web@main")
+	for _, want := range []string{"Workspace PROJ-1", "api", "new branch PROJ-1 from origin/main", "web", "branch main tracking origin/main"} {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("output missing %q:\n%s", want, r.out)
 		}
@@ -36,7 +36,7 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	// Without --repos/--bundles the picker opens, with members preselected.
 	// Members stay untouched even if deselected.
 	fake := &fakeUI{multi: [][]string{{"repo:tools"}}}
-	r = mustRun(t, env, fake, "workspace", "DOM-1")
+	r = mustRun(t, env, fake, "workspace", "PROJ-1")
 	if !strings.Contains(r.out, "tools") || strings.Contains(r.out, "api") {
 		t.Errorf("unexpected output:\n%s", r.out)
 	}
@@ -44,36 +44,36 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	if opts := fake.offered[0]; len(opts) != 3 || !opts[0].Selected || opts[1].Selected || !opts[2].Selected || opts[0].Value != "repo:api" {
 		t.Errorf("picker options: %+v", opts)
 	}
-	if fake.asked[0] != "Add to workspace DOM-1" {
+	if fake.asked[0] != "Add to workspace PROJ-1" {
 		t.Errorf("asked %v", fake.asked)
 	}
 
-	testutil.WriteFile(t, wsPath(env, "DOM-1", "web", "dirty.txt"), "x")
+	testutil.WriteFile(t, wsPath(env, "PROJ-1", "web", "dirty.txt"), "x")
 	r = mustRun(t, env, nil, "ws", "list")
-	if !strings.Contains(r.out, "DOM-1") || !strings.Contains(r.out, "api@DOM-1  tools@DOM-1  web@main*") {
+	if !strings.Contains(r.out, "PROJ-1") || !strings.Contains(r.out, "api@PROJ-1  tools@PROJ-1  web@main*") {
 		t.Errorf("list output:\n%s", r.out)
 	}
 
 	// Partial removal.
-	r = mustRun(t, env, nil, "ws", "remove", "DOM-1", "--repos", "tools", "--yes")
-	if !strings.Contains(r.out, "tools") || !strings.Contains(r.out, "worktree removed, branch DOM-1 deleted") {
+	r = mustRun(t, env, nil, "ws", "remove", "PROJ-1", "--repos", "tools", "--yes")
+	if !strings.Contains(r.out, "tools") || !strings.Contains(r.out, "worktree removed, branch PROJ-1 deleted") {
 		t.Errorf("remove output:\n%s", r.out)
 	}
-	if _, err := os.Stat(wsPath(env, "DOM-1", "tools")); !os.IsNotExist(err) {
+	if _, err := os.Stat(wsPath(env, "PROJ-1", "tools")); !os.IsNotExist(err) {
 		t.Error("tools not removed")
 	}
 
 	// Full removal keeps the dirty worktree and the directory.
-	r = mustRun(t, env, nil, "ws", "remove", "DOM-1", "--yes")
+	r = mustRun(t, env, nil, "ws", "remove", "PROJ-1", "--yes")
 	if !strings.Contains(r.out, "kept: has uncommitted changes") || !strings.Contains(r.out, "some repositories could not be removed") {
 		t.Errorf("remove output:\n%s", r.out)
 	}
-	os.Remove(wsPath(env, "DOM-1", "web", "dirty.txt"))
-	r = mustRun(t, env, nil, "ws", "remove", "DOM-1", "--yes")
-	if !strings.Contains(r.out, "Removed workspace DOM-1") {
+	os.Remove(wsPath(env, "PROJ-1", "web", "dirty.txt"))
+	r = mustRun(t, env, nil, "ws", "remove", "PROJ-1", "--yes")
+	if !strings.Contains(r.out, "Removed workspace PROJ-1") {
 		t.Errorf("remove output:\n%s", r.out)
 	}
-	if _, err := os.Stat(wsPath(env, "DOM-1")); !os.IsNotExist(err) {
+	if _, err := os.Stat(wsPath(env, "PROJ-1")); !os.IsNotExist(err) {
 		t.Error("workspace dir still exists")
 	}
 }
@@ -149,20 +149,20 @@ func TestWorkspaceChecksOriginForNewerBranches(t *testing.T) {
 	up := env.NewUpstream(t, "api", "main")
 	mustRun(t, env, nil, "clone", up)
 
-	// A teammate pushes DOM-1 after our clone/sync.
-	testutil.Commit(t, up, "DOM-1", "theirs.txt", "x")
+	// A teammate pushes PROJ-1 after our clone/sync.
+	testutil.Commit(t, up, "PROJ-1", "theirs.txt", "x")
 
-	r := mustRun(t, env, nil, "ws", "Offline", "--repos", "api@DOM-1", "--no-fetch")
-	if !strings.Contains(r.out, "new branch DOM-1 from origin/main") {
+	r := mustRun(t, env, nil, "ws", "Offline", "--repos", "api@PROJ-1", "--no-fetch")
+	if !strings.Contains(r.out, "new branch PROJ-1 from origin/main") {
 		t.Errorf("--no-fetch should use stale refs:\n%s", r.out)
 	}
 	mustRun(t, env, nil, "ws", "remove", "Offline", "--yes")
 
-	r = mustRun(t, env, nil, "ws", "DOM-1", "--repos", "api")
-	if !strings.Contains(r.out, "branch DOM-1 tracking origin/DOM-1") {
+	r = mustRun(t, env, nil, "ws", "PROJ-1", "--repos", "api")
+	if !strings.Contains(r.out, "branch PROJ-1 tracking origin/PROJ-1") {
 		t.Errorf("expected the pushed branch to be found:\n%s", r.out)
 	}
-	if _, err := os.Stat(wsPath(env, "DOM-1", "api", "theirs.txt")); err != nil {
+	if _, err := os.Stat(wsPath(env, "PROJ-1", "api", "theirs.txt")); err != nil {
 		t.Error("worktree does not have the teammate's commit")
 	}
 }
@@ -224,41 +224,41 @@ func TestWorkspacePickerBranchChoices(t *testing.T) {
 
 func TestWorkspaceBaseVersusBranch(t *testing.T) {
 	env := testutil.Setup(t)
-	domino := env.NewUpstream(t, "domino", "main")
+	billing := env.NewUpstream(t, "billing", "main")
 	web := env.NewUpstream(t, "web", "main")
-	testutil.Commit(t, domino, "release-2.4", "fix.txt", "release")
+	testutil.Commit(t, billing, "release-2.4", "fix.txt", "release")
 	testutil.Commit(t, web, "develop", "dev.txt", "develop")
-	mustRun(t, env, nil, "clone", domino)
+	mustRun(t, env, nil, "clone", billing)
 	mustRun(t, env, nil, "clone", web)
 
 	// repo:base -> own branch from the base, per repository.
-	r := mustRun(t, env, nil, "ws", "HOTFIX-77", "--repos", "domino:release-2.4,web:develop")
+	r := mustRun(t, env, nil, "ws", "HOTFIX-77", "--repos", "billing:release-2.4,web:develop")
 	for _, want := range []string{"new branch HOTFIX-77 from origin/release-2.4", "new branch HOTFIX-77 from origin/develop"} {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("output missing %q:\n%s", want, r.out)
 		}
 	}
 	// A second hotfix from the same base works: each has its own branch.
-	mustRun(t, env, nil, "ws", "HOTFIX-78", "--repos", "domino:release-2.4")
+	mustRun(t, env, nil, "ws", "HOTFIX-78", "--repos", "billing:release-2.4")
 	r = mustRun(t, env, nil, "ws", "list")
-	if !strings.Contains(r.out, "HOTFIX-77  domino@HOTFIX-77  web@HOTFIX-77") || !strings.Contains(r.out, "HOTFIX-78  domino@HOTFIX-78") {
+	if !strings.Contains(r.out, "HOTFIX-77  billing@HOTFIX-77  web@HOTFIX-77") || !strings.Contains(r.out, "HOTFIX-78  billing@HOTFIX-78") {
 		t.Errorf("list:\n%s", r.out)
 	}
-	if _, err := os.Stat(wsPath(env, "HOTFIX-78", "domino", "fix.txt")); err != nil {
+	if _, err := os.Stat(wsPath(env, "HOTFIX-78", "billing", "fix.txt")); err != nil {
 		t.Error("HOTFIX-78 not based on release-2.4")
 	}
 
 	// repo@branch -> the branch itself, so only one workspace can have it.
-	r = mustRun(t, env, nil, "ws", "REL-A", "--repos", "domino@release-2.4")
+	r = mustRun(t, env, nil, "ws", "REL-A", "--repos", "billing@release-2.4")
 	if !strings.Contains(r.out, "branch release-2.4 tracking origin/release-2.4") {
 		t.Errorf("output:\n%s", r.out)
 	}
-	r = run(t, env, nil, "ws", "REL-B", "--repos", "domino@release-2.4")
+	r = run(t, env, nil, "ws", "REL-B", "--repos", "billing@release-2.4")
 	if r.e == nil || !strings.Contains(r.e.Error(), "already checked out at") {
 		t.Errorf("expected branch-in-use error, got %v", r.e)
 	}
 
-	if r := run(t, env, nil, "ws", "X", "--repos", "domino:nope"); r.e == nil || !strings.Contains(r.e.Error(), `base branch "nope"`) {
+	if r := run(t, env, nil, "ws", "X", "--repos", "billing:nope"); r.e == nil || !strings.Contains(r.e.Error(), `base branch "nope"`) {
 		t.Errorf("expected missing base error, got %v", r.e)
 	}
 	if r := run(t, env, nil, "ws", "X", "--from", "main"); r.e == nil {

@@ -33,8 +33,8 @@ under [bundles.<name>].
 Without --repos, pick the repositories interactively (the current ones are
 preselected). --repos takes comma-separated values and can be repeated.`,
 		Example: `  wt bundle backend                        # pick repositories
-  wt bundle backend --repos domino,cws
-  wt bundle release --repos domino:release-2.4,web:release-2.4
+  wt bundle backend --repos billing,worker
+  wt bundle release --repos billing:release-2.4,web:release-2.4
   wt bundle list                           # show every bundle`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

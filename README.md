@@ -10,13 +10,13 @@ files.
 
 ```
 ~/.repos/
-    domino.git/              # bare clone: the single source of truth
-    domino/                  # primary checkout, detached at origin/<default>
+    billing.git/   # bare clone: the single source of truth
+    billing/       # primary checkout, detached at origin/<default>
 ~/workspaces/
-    DOM-12345/
-        CLAUDE.md            # generated instructions for AI agents (optional)
-        domino/              # git worktree on branch DOM-12345
-        compute-workload-service/
+    PROJ-123/
+        CLAUDE.md  # generated instructions for AI agents (optional)
+        billing/   # git worktree on branch PROJ-123
+        worker/
 ```
 
 ## Install
@@ -45,20 +45,20 @@ Run `wt doctor` to check the setup.
 
 ```bash
 # 1. Add repositories to the index (once per repository)
-wt clone git@github.com:cerebrotech/domino.git
-wt clone git@github.com:cerebrotech/compute-workload-service.git
+wt clone git@github.com:acme/billing.git
+wt clone git@github.com:acme/worker.git
 
 # 2. Optional: integrations
 wt integrations codegraph          # index each workspace with CodeGraph
 wt integrations harness claude     # generate CLAUDE.md (enabled by default)
 
 # 3. Optional: a bundle of repositories you often use together
-wt bundle backend --repos domino,compute-workload-service
+wt bundle backend --repos billing,worker
 
 # 4. Create a workspace and jump into it
-wt ws DOM-80506 --bundles backend
-wt cd DOM-80506
-claude                             # or: wt open DOM-80506
+wt ws PROJ-456 --bundles backend
+wt cd PROJ-456
+claude                             # or: wt open PROJ-456
 
 # 5. When the work is merged
 wt cleanup
@@ -92,27 +92,32 @@ The first entry is the default (the workspace branch). Then come the default
 branch and the rest, most recent first. After picking a branch, choose
 between creating the workspace branch from it and working directly on it.
 The result is shown next to the repository in the same syntax as `--repos`
-(`domino:release-2.4`, `domino@feature/x`). `--repos` and `--bundles` always
+(`billing:release-2.4`, `billing@feature/x`). `--repos` and `--bundles` always
 take a value: comma-separated (no spaces, or quote the list), or repeat the
 flag (`--repos a --repos b:develop`).
 
 ### Workspaces and branches
 
+`<default>` is each repository's default branch (`main`, `master`, `develop`,
+...), taken from origin's `HEAD` when the repository is cloned and refreshed
+by `wt sync`. Repositories in the same workspace can have different default
+branches.
+
 Each repository in `--repos` takes one of three forms:
 
 | Form | Branch in the worktree | Typical use |
 |---|---|---|
-| `repo` | the workspace branch `<name>`, new from `origin/<default>` if it doesn't exist | a ticket off main |
+| `repo` | the workspace branch `<name>`, new from `origin/<default>` if it doesn't exist | a ticket off the default branch |
 | `repo:base` | the workspace branch `<name>`, new from `base` if it doesn't exist | a hotfix or PR into `base`, or stacking on another branch |
 | `repo@branch` | `branch` itself | reviewing or continuing an existing branch |
 
 ```bash
-wt ws DOM-12345                                         # pick bundles and repositories
-wt ws DOM-12345 --repos domino,cws                      # DOM-12345 in both
-wt ws HOTFIX-77 --repos domino:release-2.4,web:develop  # HOTFIX-77 from a different base per repo
-wt ws HOTFIX-78 --repos domino:release-2.4              # another hotfix from the same base
-wt ws REVIEW-1  --repos domino@feature/foo              # work on feature/foo itself
-wt ws DOM-12345 --repos domino --no-fetch               # offline: use the refs from the last sync
+wt ws PROJ-123                                           # pick bundles and repositories
+wt ws PROJ-123 --repos billing,worker                    # PROJ-123 in both
+wt ws HOTFIX-77 --repos billing:release-2.4,web:develop  # HOTFIX-77 from a different base per repo
+wt ws HOTFIX-78 --repos billing:release-2.4              # another hotfix from the same base
+wt ws REVIEW-1  --repos billing@feature/foo              # work on feature/foo itself
+wt ws PROJ-123 --repos billing --no-fetch                # offline: use the refs from the last sync
 ```
 
 With `repo` and `repo:base`, the workspace branch is found or created in
@@ -144,8 +149,8 @@ Notes:
   with a note to `git pull`. If origin can't be reached, `wt` warns and uses
   the local refs; `--no-fetch` skips the check.
 - **One worktree per branch.** Git allows a branch to be checked out in only
-  one worktree, so two workspaces can't both use `domino@release-2.4`. Use
-  `domino:release-2.4` instead: each workspace then gets its own branch.
+  one worktree, so two workspaces can't both use `billing@release-2.4`. Use
+  `billing:release-2.4` instead: each workspace then gets its own branch.
 - **No metadata file.** A workspace's repositories are read from the
   worktrees it contains.
 
@@ -161,7 +166,7 @@ When a workspace combines bundles and `--repos`:
   for the same repository, the first bundle listed wins.
 
 Bundles use the same forms, e.g.
-`wt bundle release --repos domino:release-2.4,web:release-2.4`.
+`wt bundle release --repos billing:release-2.4,web:release-2.4`.
 
 `wt` prints a note every time it resolves one of these conflicts.
 
@@ -224,7 +229,7 @@ enabled = false
 template = "agents"         # writes AGENTS.md
 
 [bundles.backend]
-repos = ["domino", "compute-workload-service@main"]
+repos = ["billing", "worker@main"]
 ```
 
 `wt bundle` and `wt integrations` rewrite this file, which drops any

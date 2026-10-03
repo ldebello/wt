@@ -32,7 +32,7 @@ command = "cursor -n"
 enabled = true
 
 [bundles.backend]
-repos = ["domino", "cws@main"]
+repos = ["billing", "worker@main"]
 `
 	if err := os.WriteFile(File(dir), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ repos = ["domino", "cws@main"]
 	if cfg.Editor.Command != "cursor -n" || !cfg.Integrations.Codegraph.Enabled {
 		t.Errorf("unexpected config: %+v", cfg)
 	}
-	if got := cfg.Bundles["backend"].Repos; len(got) != 2 || got[1] != "cws@main" {
+	if got := cfg.Bundles["backend"].Repos; len(got) != 2 || got[1] != "worker@main" {
 		t.Errorf("bundle = %v", got)
 	}
 }

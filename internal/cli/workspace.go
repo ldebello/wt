@@ -46,11 +46,11 @@ branches involved (one quick request per repository, in parallel) and
 fetches only what changed. An existing local branch that is behind
 origin/<branch> is fast-forwarded; one that has diverged is left as is.
 --no-fetch skips the network and uses the refs from the last 'wt sync'.`,
-		Example: `  wt ws DOM-12345                                   # pick bundles and repositories
-  wt ws DOM-12345 --repos domino,cws                # branch DOM-12345 in both
-  wt ws HOTFIX-77 --repos domino:release-2.4,web:develop   # HOTFIX-77 from each base
-  wt ws REVIEW-1 --repos domino@feature/foo         # work on feature/foo itself
-  wt ws DOM-12345 --bundles backend --repos tools`,
+		Example: `  wt ws PROJ-123                                           # pick bundles and repositories
+  wt ws PROJ-123 --repos billing,worker                    # branch PROJ-123 in both
+  wt ws HOTFIX-77 --repos billing:release-2.4,web:develop  # HOTFIX-77 from each base
+  wt ws REVIEW-1 --repos billing@feature/foo               # work on feature/foo itself
+  wt ws PROJ-123 --bundles backend --repos tools`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -362,8 +362,8 @@ directory. Nothing is forced: worktrees with uncommitted changes are kept,
 and a local branch is deleted only if it is merged into origin/<default>
 (squash merges included) or pushed to origin. Remote branches are deleted
 only when confirmed (or with --delete-remote).`,
-		Example: `  wt ws remove DOM-12345
-  wt ws remove DOM-12345 --repos cws        # drop one repository`,
+		Example: `  wt ws remove PROJ-123
+  wt ws remove PROJ-123 --repos worker        # drop one repository`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			remoteSet := cmd.Flags().Changed("delete-remote")
