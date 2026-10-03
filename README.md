@@ -19,6 +19,12 @@ files.
         worker/
 ```
 
+The primary checkout is for reading the latest code: `wt open <repo>` moves
+it to the latest default branch before opening it. It is detached (shell
+prompts show a tag or commit hash instead of a branch name) so that the
+default branch itself stays free for `repo@main` in workspaces. Do your work
+in workspaces.
+
 ## Install
 
 Requires Go 1.27+ and git 2.38+.
@@ -75,7 +81,7 @@ wt cleanup
 | `wt bundle <name> [--repos ...]` | Create or update a bundle; without `--repos`, pick interactively |
 | `wt bundle list` / `wt bundle remove <name>` | List or delete bundles |
 | `wt cd [target]` | `cd` into a workspace, `<workspace>/<repo>`, or a primary checkout |
-| `wt open [target]` | Open the same targets in your editor |
+| `wt open [target]` | Open the same targets in your editor; a primary checkout is first updated to the latest default branch (`--no-fetch` skips it) |
 | `wt sync [repo...]` | Fetch every repository in parallel and update the primary checkouts |
 | `wt cleanup` | Classify workspaces and remove the merged ones you select |
 | `wt integrations [codegraph \| harness <name>]` | List integrations, or enable one (`--disable` turns it off) |
@@ -183,8 +189,8 @@ Bundles use the same forms, e.g.
   the local branch, and a local branch whose only other copy is the
   `origin/<branch>` being deleted is kept.
 - A detached worktree whose commits are on no branch is never removed.
-- `wt sync` moves a primary checkout only when it is clean, detached, and
-  contains no commits of its own.
+- `wt sync` and `wt open` move a primary checkout only when it is clean,
+  detached, and contains no commits of its own.
 
 ### Cleanup
 

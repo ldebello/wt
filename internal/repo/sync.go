@@ -25,6 +25,20 @@ func (ix Index) Sync(ctx context.Context, name string) (string, error) {
 	return ix.updatePrimary(ctx, name)
 }
 
+// RefreshPrimary brings the primary checkout of name up to date cheaply: it
+// asks origin only about the default branch (fetching it if it changed) and
+// then moves the primary checkout under the same safety rules as Sync.
+func (ix Index) RefreshPrimary(ctx context.Context, name string) (string, error) {
+	def, err := git.DefaultBranch(ctx, ix.BarePath(name))
+	if err != nil {
+		return "", err
+	}
+	if err := ix.FetchBranches(ctx, name, []string{def}); err != nil {
+		return "", err
+	}
+	return ix.updatePrimary(ctx, name)
+}
+
 func (ix Index) updatePrimary(ctx context.Context, name string) (string, error) {
 	primary := ix.PrimaryPath(name)
 	if _, err := os.Stat(primary); err != nil {

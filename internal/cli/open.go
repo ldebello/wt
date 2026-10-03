@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,13 +15,19 @@ import (
 )
 
 func newOpenCmd(app *App) *cobra.Command {
-	return &cobra.Command{
+	var noFetch bool
+	cmd := &cobra.Command{
 		Use:   "open [workspace[/repo] | repo]",
 		Short: "Open a workspace or a repository's primary checkout in your editor",
 		Long: `Open a workspace, a repository inside it (<workspace>/<repo>), or a
 repository's primary checkout in the editor from [editor] command in
 settings.toml, else $EDITOR, else 'code'. Without an argument, pick
-interactively. wt only launches the editor; it never changes the checkout.`,
+interactively.
+
+Before opening a primary checkout, wt asks origin for the latest default
+branch (one quick request) and moves the checkout to it, so you always see
+the latest code. A primary checkout with local changes or commits is left
+as is. --no-fetch skips this. Workspaces are opened as they are.`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeTargets(app),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -31,6 +39,9 @@ interactively. wt only launches the editor; it never changes the checkout.`,
 			if err != nil {
 				return err
 			}
+			if !noFetch {
+				refreshPrimary(cmd.Context(), app, path)
+			}
 			editor := exec.CommandContext(cmd.Context(), argv[0], append(argv[1:], path)...)
 			editor.Stdin = os.Stdin
 			editor.Stdout = app.Out
@@ -38,6 +49,27 @@ interactively. wt only launches the editor; it never changes the checkout.`,
 			return editor.Run()
 		},
 	}
+	cmd.Flags().BoolVar(&noFetch, "no-fetch", false, "open the primary checkout as it is, without checking origin")
+	return cmd
+}
+
+// refreshPrimary updates path first if it is a primary checkout. Problems
+// are warnings: the checkout is opened as it is.
+func refreshPrimary(ctx context.Context, app *App, path string) {
+	ix, err := app.Index()
+	if err != nil {
+		return
+	}
+	name := filepath.Base(path)
+	if filepath.Dir(path) != filepath.Clean(ix.Dir) || !ix.Exists(name) {
+		return // a workspace or a repository inside one
+	}
+	msg, err := ix.RefreshPrimary(ctx, name)
+	if err != nil {
+		app.warnf("could not update %s from origin, opening it as it is: %v\n", name, err)
+		return
+	}
+	fmt.Fprintf(app.Err, "%s: %s\n", name, msg)
 }
 
 // editorCommand returns the editor argv and checks that the binary exists.

@@ -190,3 +190,50 @@ func TestShellIntegrationEndToEnd(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenRefreshesPrimaryCheckout(t *testing.T) {
+	env := testutil.Setup(t)
+	up := env.NewUpstream(t, "api", "main")
+	mustRun(t, env, nil, "clone", up)
+	mustRun(t, env, nil, "ws", "W", "--repos", "api")
+	testutil.StubBinary(t, "myeditor", "exit 0")
+	t.Setenv("EDITOR", "myeditor")
+	primary := filepath.Join(env.Home, ".repos", "api")
+
+	// A new commit upstream: --no-fetch opens the checkout as it is.
+	testutil.Commit(t, up, "main", "new.txt", "1")
+	mustRun(t, env, nil, "open", "api", "--no-fetch")
+	if _, err := os.Stat(filepath.Join(primary, "new.txt")); !os.IsNotExist(err) {
+		t.Error("--no-fetch updated the primary checkout")
+	}
+
+	// By default it is moved to the latest default branch first.
+	r := mustRun(t, env, nil, "open", "api")
+	if !strings.Contains(r.err, "api: primary updated to origin/main") {
+		t.Errorf("stderr:\n%s", r.err)
+	}
+	if _, err := os.Stat(filepath.Join(primary, "new.txt")); err != nil {
+		t.Error("primary checkout not updated")
+	}
+	if r = mustRun(t, env, nil, "open", "api"); !strings.Contains(r.err, "primary up to date") {
+		t.Errorf("stderr:\n%s", r.err)
+	}
+
+	// Local changes are never overwritten.
+	testutil.Commit(t, up, "main", "new.txt", "2")
+	testutil.WriteFile(t, filepath.Join(primary, "scratch.txt"), "mine")
+	if r = mustRun(t, env, nil, "open", "api"); !strings.Contains(r.err, "local changes, not updated") {
+		t.Errorf("stderr:\n%s", r.err)
+	}
+
+	// Workspaces are opened as they are, without asking origin.
+	if r = mustRun(t, env, nil, "open", "W"); r.err != "" {
+		t.Errorf("workspace open printed:\n%s", r.err)
+	}
+
+	// Origin unreachable: warn and open anyway.
+	os.RemoveAll(up)
+	if r = mustRun(t, env, nil, "open", "api"); !strings.Contains(r.err, "could not update api from origin, opening it as it is") {
+		t.Errorf("stderr:\n%s", r.err)
+	}
+}
