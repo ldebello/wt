@@ -79,7 +79,7 @@ func (Terminal) MultiSelect(title string, options []Option) ([]Option, error) {
 			Options(huhOptions(visible)...).
 			Filterable(true).
 			Value(&values)
-		key, hovered, err := run(field, field.Hovered, false)
+		key, hovered, err := run(field, field.Hovered, false, labels(visible))
 		if err != nil {
 			return nil, err
 		}
@@ -152,12 +152,13 @@ func (Terminal) Select(title string, options []Option) (string, error) {
 	groups := Groups(options)
 	for view := 0; ; view = (view + 1) % (len(groups) + 1) {
 		var value string
+		visible := Visible(options, groups, view)
 		field := huh.NewSelect[string]().
 			Title(title).
 			Description(strings.TrimSpace(help(options, groups, view) + "   type to filter")).
-			Options(huhOptions(Visible(options, groups, view))...).
+			Options(huhOptions(visible)...).
 			Value(&value)
-		key, _, err := run(field, nil, true)
+		key, _, err := run(field, nil, true, labels(visible))
 		if err != nil || key != GroupKey {
 			return value, err
 		}
@@ -167,7 +168,7 @@ func (Terminal) Select(title string, options []Option) (string, error) {
 func (Terminal) Confirm(title string, def bool) (bool, error) {
 	value := def
 	field := huh.NewConfirm().Title(title).Affirmative("Yes").Negative("No").Value(&value)
-	_, _, err := run(field, nil, false)
+	_, _, err := run(field, nil, false, nil)
 	return value, err
 }
 
@@ -261,14 +262,17 @@ func huhOptions(options []Option) []huh.Option[string] {
 // With typeToFilter, typing a character starts filtering right away (as if
 // '/' had been pressed first); used for single selects, where letters have
 // no other meaning.
-func run(field huh.Field, hovered func() (string, bool), typeToFilter bool) (key, hoveredValue string, err error) {
+//
+// What the user types in a filter is highlighted in labels (the options
+// shown).
+func run(field huh.Field, hovered func() (string, bool), typeToFilter bool, labels []string) (key, hoveredValue string, err error) {
 	if !IsTerminal() {
 		return "", "", ErrNoTTY
 	}
 	form := huh.NewForm(huh.NewGroup(field)).WithShowHelp(true)
 	form.SubmitCmd = tea.Quit
 	form.CancelCmd = tea.Interrupt
-	m := &keyCatcher{form: form, hovered: hovered, typeToFilter: typeToFilter}
+	m := &keyCatcher{form: form, hovered: hovered, typeToFilter: typeToFilter, query: filterQuery(field), labels: labels}
 	_, err = tea.NewProgram(m, tea.WithOutput(os.Stderr)).Run()
 	if errors.Is(err, tea.ErrInterrupted) || form.State == huh.StateAborted {
 		return "", "", ErrAborted
@@ -283,6 +287,8 @@ type keyCatcher struct {
 	hovered      func() (string, bool)
 	typeToFilter bool
 	filtering    bool
+	query        func() string // the filter text, when the field has one
+	labels       []string
 	key          string
 	hoveredValue string
 }
@@ -327,7 +333,19 @@ func (m *keyCatcher) View() string {
 	if m.key != "" {
 		return ""
 	}
-	return m.form.View()
+	if m.query == nil {
+		return m.form.View()
+	}
+	return highlight(m.form.View(), m.query(), m.labels)
+}
+
+// labels returns the labels huh shows for options.
+func labels(options []Option) []string {
+	out := make([]string, len(options))
+	for i, o := range options {
+		out[i] = o.DisplayLabel()
+	}
+	return out
 }
 
 // IsTerminal reports whether stdin and stderr are terminals.
