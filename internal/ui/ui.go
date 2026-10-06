@@ -58,7 +58,9 @@ type Choice struct {
 type Prompter interface {
 	// MultiSelect returns the selected options, with any Choice made.
 	MultiSelect(title string, options []Option) ([]Option, error)
-	Select(title string, options []Option) (string, error)
+	// Select asks the user to pick one option. startGroup, when it names one
+	// of options' groups, is the group shown first instead of "all".
+	Select(title string, options []Option, startGroup string) (string, error)
 	Confirm(title string, def bool) (bool, error)
 }
 
@@ -122,7 +124,7 @@ func chooseFor(options []Option, hovered string) error {
 		name = "option"
 	}
 	label := strings.TrimSpace(options[i].Label)
-	picked, err := Terminal{}.Select(label+": choose "+name, items)
+	picked, err := Terminal{}.Select(label+": choose "+name, items, "")
 	if errors.Is(err, ErrAborted) {
 		return nil // Esc in the dropdown just goes back to the list
 	}
@@ -135,7 +137,7 @@ func chooseFor(options []Option, hovered string) error {
 		for k, c := range choices[j].Next {
 			next[k] = Option{Label: c.Label, Value: c.Value}
 		}
-		picked, err = Terminal{}.Select(label+": "+strings.TrimSpace(choices[j].Label), next)
+		picked, err = Terminal{}.Select(label+": "+strings.TrimSpace(choices[j].Label), next, "")
 		if errors.Is(err, ErrAborted) {
 			return nil
 		}
@@ -148,9 +150,13 @@ func chooseFor(options []Option, hovered string) error {
 	return nil
 }
 
-func (Terminal) Select(title string, options []Option) (string, error) {
+func (Terminal) Select(title string, options []Option, startGroup string) (string, error) {
 	groups := Groups(options)
-	for view := 0; ; view = (view + 1) % (len(groups) + 1) {
+	start := 0
+	if i := slices.Index(groups, startGroup); i >= 0 {
+		start = i + 1
+	}
+	for view := start; ; view = (view + 1) % (len(groups) + 1) {
 		var value string
 		visible := Visible(options, groups, view)
 		field := huh.NewSelect[string]().

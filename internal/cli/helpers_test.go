@@ -44,7 +44,7 @@ func (f *fakeUI) MultiSelect(title string, options []ui.Option) ([]ui.Option, er
 	return picked, nil
 }
 
-func (f *fakeUI) Select(title string, options []ui.Option) (string, error) {
+func (f *fakeUI) Select(title string, options []ui.Option, startGroup string) (string, error) {
 	f.asked = append(f.asked, title)
 	f.offered = append(f.offered, options)
 	if len(f.selects) == 0 {

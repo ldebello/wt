@@ -21,6 +21,7 @@ const HomeEnv = "WT_HOME"
 type Config struct {
 	Paths        Paths              `toml:"paths"`
 	Editor       Editor             `toml:"editor"`
+	Open         Open               `toml:"open"`
 	Integrations Integrations       `toml:"integrations"`
 	Bundles      map[string]Bundle  `toml:"bundles,omitempty"`
 	Commands     map[string]Command `toml:"commands,omitempty"`
@@ -43,6 +44,12 @@ type Editor struct {
 	// Command is split into arguments shell-style; the target path is appended.
 	// Empty means $EDITOR, then "code".
 	Command string `toml:"command,omitempty"`
+}
+
+type Open struct {
+	// Default is the group shown when the interactive picker (`wt open`,
+	// `wt cd`) opens: "all" (default), "workspaces" or "repositories".
+	Default string `toml:"default,omitempty"`
 }
 
 type Integrations struct {

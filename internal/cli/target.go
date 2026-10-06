@@ -71,5 +71,9 @@ func pickTarget(app *App) (string, error) {
 	if len(options) == 0 {
 		return "", errors.New("no workspaces or repositories yet; start with: wt clone <url>")
 	}
-	return app.UI.Select("Open", options)
+	cfg, err := app.Config()
+	if err != nil {
+		return "", err
+	}
+	return app.UI.Select("Open", options, cfg.Open.Default)
 }

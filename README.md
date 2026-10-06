@@ -302,6 +302,9 @@ workspaces = "~/workspaces"
 [editor]
 command = "code"            # default: $EDITOR, then code. Aliases don't work; e.g. "open -a 'Visual Studio Code'"
 
+[open]
+default = "workspaces"      # group shown first in the `wt open`/`wt cd` picker: all (default), workspaces, repositories
+
 [integrations.codegraph]
 enabled = false
 
