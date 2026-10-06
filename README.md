@@ -75,6 +75,8 @@ wt cleanup
 | Command | What it does |
 |---|---|
 | `wt clone <url> [--name alias]` | Add a repository: bare clone plus primary checkout |
+| `wt repos` | List repositories with their default branch and the workspaces using them |
+| `wt repos remove <repo>` | Delete a repository from the index (refused while it is in use or has work not on origin) |
 | `wt workspace <name> [--repos ...] [--bundles ...]` | Create a workspace or add repositories to it (alias: `ws`); without flags, pick interactively |
 | `wt ws list` | List workspaces as `repo@branch` (`*` = uncommitted changes) |
 | `wt ws remove <name> [--repos ...]` | Remove a workspace, or only some of its repositories |
@@ -192,6 +194,10 @@ Bundles use the same forms, e.g.
 - A detached worktree whose commits are on no branch is never removed.
 - `wt sync` and `wt open` move a primary checkout only when it is clean,
   detached, and contains no commits of its own.
+- `wt repos remove` refuses while a workspace uses the repository, while the
+  primary checkout has changes or commits not on origin, and while a local
+  branch (for example one kept by `wt ws remove`) has commits not on origin.
+  Nothing on origin is touched.
 
 ### Cleanup
 

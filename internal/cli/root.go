@@ -28,6 +28,7 @@ checkout, and builds workspaces (~/workspaces/<name>/) out of git worktrees.`,
 	root.SetErr(app.Err)
 	root.AddCommand(
 		newCloneCmd(app),
+		newReposCmd(app),
 		newWorkspaceCmd(app),
 		newBundleCmd(app),
 		newOpenCmd(app),
