@@ -79,7 +79,7 @@ func (Terminal) MultiSelect(title string, options []Option) ([]Option, error) {
 			Options(huhOptions(visible)...).
 			Filterable(true).
 			Value(&values)
-		key, hovered, err := run(field, field.Hovered)
+		key, hovered, err := run(field, field.Hovered, false)
 		if err != nil {
 			return nil, err
 		}
@@ -154,10 +154,10 @@ func (Terminal) Select(title string, options []Option) (string, error) {
 		var value string
 		field := huh.NewSelect[string]().
 			Title(title).
-			Description(help(options, groups, view)).
+			Description(strings.TrimSpace(help(options, groups, view) + "   type to filter")).
 			Options(huhOptions(Visible(options, groups, view))...).
 			Value(&value)
-		key, _, err := run(field, nil)
+		key, _, err := run(field, nil, true)
 		if err != nil || key != GroupKey {
 			return value, err
 		}
@@ -167,7 +167,7 @@ func (Terminal) Select(title string, options []Option) (string, error) {
 func (Terminal) Confirm(title string, def bool) (bool, error) {
 	value := def
 	field := huh.NewConfirm().Title(title).Affirmative("Yes").Negative("No").Value(&value)
-	_, _, err := run(field, nil)
+	_, _, err := run(field, nil, false)
 	return value, err
 }
 
@@ -257,14 +257,18 @@ func huhOptions(options []Option) []huh.Option[string] {
 
 // run shows a single-field form. It returns the extra key (GroupKey or
 // ChoiceKey) that ended it, if any, and the hovered value at that moment.
-func run(field huh.Field, hovered func() (string, bool)) (key, hoveredValue string, err error) {
+//
+// With typeToFilter, typing a character starts filtering right away (as if
+// '/' had been pressed first); used for single selects, where letters have
+// no other meaning.
+func run(field huh.Field, hovered func() (string, bool), typeToFilter bool) (key, hoveredValue string, err error) {
 	if !IsTerminal() {
 		return "", "", ErrNoTTY
 	}
 	form := huh.NewForm(huh.NewGroup(field)).WithShowHelp(true)
 	form.SubmitCmd = tea.Quit
 	form.CancelCmd = tea.Interrupt
-	m := &keyCatcher{form: form, hovered: hovered}
+	m := &keyCatcher{form: form, hovered: hovered, typeToFilter: typeToFilter}
 	_, err = tea.NewProgram(m, tea.WithOutput(os.Stderr)).Run()
 	if errors.Is(err, tea.ErrInterrupted) || form.State == huh.StateAborted {
 		return "", "", ErrAborted
@@ -272,10 +276,13 @@ func run(field huh.Field, hovered func() (string, bool)) (key, hoveredValue stri
 	return m.key, m.hoveredValue, err
 }
 
-// keyCatcher wraps a form to intercept GroupKey and ChoiceKey.
+// keyCatcher wraps a form to intercept GroupKey and ChoiceKey, and to start
+// filtering when the user types.
 type keyCatcher struct {
 	form         *huh.Form
 	hovered      func() (string, bool)
+	typeToFilter bool
+	filtering    bool
 	key          string
 	hoveredValue string
 }
@@ -296,6 +303,20 @@ func (m *keyCatcher) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+		}
+		if m.typeToFilter {
+			switch {
+			case k.Type == tea.KeyRunes && !k.Alt && !m.filtering:
+				m.filtering = true
+				if k.String() != "/" {
+					// Open the filter, then type the key into it.
+					_, open := m.form.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+					_, typed := m.form.Update(msg)
+					return m, tea.Batch(open, typed)
+				}
+			case k.Type == tea.KeyEsc || k.Type == tea.KeyEnter:
+				m.filtering = false
+			}
 		}
 	}
 	_, cmd := m.form.Update(msg)
