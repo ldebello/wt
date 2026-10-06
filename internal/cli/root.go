@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -26,6 +27,10 @@ checkout, and builds workspaces (~/workspaces/<name>/) out of git worktrees.`,
 	}
 	root.SetOut(app.Out)
 	root.SetErr(app.Err)
+	// List commands with their aliases ("workspace, ws") so they can be
+	// discovered from --help.
+	root.SetUsageTemplate(strings.ReplaceAll(root.UsageTemplate(),
+		"{{rpad .Name .NamePadding }}", "{{rpad (nameWithAliases .) (aliasPadding .)}}"))
 	root.AddCommand(
 		newCloneCmd(app),
 		newReposCmd(app),
@@ -42,6 +47,21 @@ checkout, and builds workspaces (~/workspaces/<name>/) out of git worktrees.`,
 		newCheckCmd(app),
 	)
 	return root
+}
+
+func init() {
+	cobra.AddTemplateFunc("nameWithAliases", func(c *cobra.Command) string { return c.NameAndAliases() })
+	cobra.AddTemplateFunc("aliasPadding", func(c *cobra.Command) int {
+		width := 11
+		if p := c.Parent(); p != nil {
+			for _, sibling := range p.Commands() {
+				if sibling.IsAvailableCommand() || sibling.Name() == "help" {
+					width = max(width, len(sibling.NameAndAliases()))
+				}
+			}
+		}
+		return width
+	})
 }
 
 // Execute runs wt with the process arguments and returns the exit code.

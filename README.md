@@ -40,12 +40,29 @@ Use `make install PREFIX=/other/bin` to install somewhere else, and
 Then enable `wt cd` and tab completion in your shell profile:
 
 ```bash
-eval "$(wt shell-init zsh)"     # ~/.zshrc, after compinit
-eval "$(wt shell-init bash)"    # ~/.bashrc
+eval "$(wt shell-init zsh)"     # ~/.zshrc, after compinit (with oh-my-zsh: after `source $ZSH/oh-my-zsh.sh`)
+eval "$(wt shell-init bash)"    # ~/.bashrc (works best with bash-completion installed)
 wt shell-init fish | source     # ~/.config/fish/config.fish
 ```
 
-Run `wt check` to verify the setup.
+Open a new terminal (or run `exec zsh`) and run `wt check` to verify the
+setup.
+
+`shell-init` sets up both `wt cd` and completion; don't also add
+`wt completion <shell>`, which only prints the completion part. Completions
+come from the `wt` binary at run time, so they stay current after
+`make install` without touching your profile. Try:
+
+```bash
+wt <TAB>                       # commands
+wt ws <TAB>                    # workspaces, and list/remove/run
+wt ws PROJ-1 --repos bil<TAB>  # repositories; after a comma, the next one
+wt cd <TAB>                    # workspaces, workspace/repo, repositories
+wt ws run -c <TAB>             # saved commands
+```
+
+If `wt <TAB>` suggests files instead: make sure the `eval` line comes after
+`compinit` (or oh-my-zsh), then `rm -f ~/.zcompdump*` and `exec zsh`.
 
 ## Quick start
 
@@ -91,6 +108,9 @@ wt cleanup
 | `wt integrations [codegraph \| harness <name>]` | List integrations, or enable one (`--disable` turns it off) |
 | `wt check [--fix]` | Health checks, with repairs for common problems |
 | `wt shell-init <zsh\|bash\|fish>` / `wt completion <shell>` | Shell integration and completion |
+
+Aliases (`ws`, `ls`, `rm`, `repo`, `cmd`) are listed next to each command in
+`wt --help` and in each command's help.
 
 `wt ws <name>` and `wt bundle <name>` without `--repos`/`--bundles` open an
 interactive picker, as do `wt cd` and `wt open` without an argument. When the

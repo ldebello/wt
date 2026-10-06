@@ -237,3 +237,23 @@ func TestOpenRefreshesPrimaryCheckout(t *testing.T) {
 		t.Errorf("stderr:\n%s", r.err)
 	}
 }
+
+func TestHelpListsAliases(t *testing.T) {
+	env := testutil.Setup(t)
+	r := mustRun(t, env, nil, "--help")
+	for _, want := range []string{"workspace, ws ", "repos, repo ", "commands, cmd "} {
+		if !strings.Contains(r.out, want) {
+			t.Errorf("root help missing %q:\n%s", want, r.out)
+		}
+	}
+	r = mustRun(t, env, nil, "ws", "--help")
+	for _, want := range []string{"list, ls ", "remove, rm "} {
+		if !strings.Contains(r.out, want) {
+			t.Errorf("ws help missing %q:\n%s", want, r.out)
+		}
+	}
+	// Hidden commands stay hidden.
+	if strings.Contains(r.out, "__cd") {
+		t.Error("hidden command listed")
+	}
+}

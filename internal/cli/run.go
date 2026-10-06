@@ -250,7 +250,7 @@ func newCommandsCmd(app *App) *cobra.Command {
 	var serial bool
 	cmd := &cobra.Command{
 		Use:     "commands [name [command]]",
-		Aliases: []string{"command", "cmd"},
+		Aliases: []string{"cmd"},
 		Short:   "Save, show or list commands for 'wt ws run -c'",
 		Long: `Save a command to run in every repository of a workspace with
 'wt ws run -c <name>'. Commands are stored in settings.toml under
