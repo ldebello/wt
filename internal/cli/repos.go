@@ -66,8 +66,8 @@ workspaces that use them.`,
 func newReposRemoveCmd(app *App) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use:     "remove <repo>",
-		Aliases: []string{"rm"},
+		Use:     "rm <repo>",
+		Aliases: []string{"remove"},
 		Short:   "Remove a repository from the index",
 		Long: `Delete a repository's primary checkout (~/.repos/<repo>) and bare clone
 (~/.repos/<repo>.git). Nothing on origin is touched.
@@ -75,9 +75,9 @@ func newReposRemoveCmd(app *App) *cobra.Command {
 wt refuses, and says why, when that could lose work or break something: a
 workspace still uses the repository, the primary checkout has uncommitted
 changes or commits not on origin, or a local branch has commits not on
-origin (for example one kept by 'wt ws remove' because it was not merged).`,
-		Example: `  wt repos remove billing
-  wt ws remove PROJ-1 --repos billing && wt repos remove billing`,
+origin (for example one kept by 'wt ws rm' because it was not merged).`,
+		Example: `  wt repos rm billing
+  wt ws rm PROJ-1 --repos billing && wt repos rm billing`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeFirstArg(app.repoNames),
 		RunE: func(cmd *cobra.Command, args []string) error {

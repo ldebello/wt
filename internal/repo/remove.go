@@ -16,7 +16,7 @@ import (
 //   - another worktree (e.g. a workspace) still uses the repository;
 //   - the primary checkout has uncommitted changes or commits not on origin;
 //   - a local branch has commits that are not on origin (e.g. a branch kept
-//     by 'wt ws remove' because it was not merged).
+//     by 'wt ws rm' because it was not merged).
 func (ix Index) Remove(ctx context.Context, name string) error {
 	if err := ix.Require(name); err != nil {
 		return err
@@ -37,7 +37,7 @@ func (ix Index) Remove(ctx context.Context, name string) error {
 		if wt.Bare || wt.Prunable || filepath.Clean(wt.Path) == resolvedPrimary {
 			continue
 		}
-		problems = append(problems, "used by the worktree "+wt.Path+" (remove it first, e.g. wt ws remove <workspace> --repos "+name+")")
+		problems = append(problems, "used by the worktree "+wt.Path+" (remove it first, e.g. wt ws rm <workspace> --repos "+name+")")
 	}
 
 	if _, err := os.Stat(primary); err == nil {

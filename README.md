@@ -93,14 +93,14 @@ wt cleanup
 |---|---|
 | `wt clone <url> [--name alias]` | Add a repository: bare clone plus primary checkout |
 | `wt repos` | List repositories with their default branch and the workspaces using them |
-| `wt repos remove <repo>` | Delete a repository from the index (refused while it is in use or has work not on origin) |
-| `wt workspace <name> [--repos ...] [--bundles ...]` | Create a workspace or add repositories to it (alias: `ws`); without flags, pick interactively |
-| `wt ws list` | List workspaces as `repo@branch` (`*` = uncommitted changes) |
-| `wt ws remove <name> [--repos ...]` | Remove a workspace, or only some of its repositories |
+| `wt repos rm <repo>` | Delete a repository from the index (refused while it is in use or has work not on origin) |
+| `wt ws <name> [--repos ...] [--bundles ...]` | Create a workspace or add repositories to it (also `wt workspace`); without flags, pick interactively |
+| `wt ws ls` | List workspaces as `repo@branch` (`*` = uncommitted changes) |
+| `wt ws rm <name> [--repos ...]` | Remove a workspace, or only some of its repositories |
 | `wt ws run '<command>'` / `wt ws run -c <saved> [args]` | Run a command in every repository of a workspace |
-| `wt commands <name> '<command>'` / `wt commands [list]` / `wt commands remove <name>` | Save, list or delete commands for `wt ws run -c` |
+| `wt cmd <name> '<command>'` / `wt cmd [ls]` / `wt cmd rm <name>` | Save, list or delete commands for `wt ws run -c` |
 | `wt bundle <name> [--repos ...]` | Create or update a bundle; without `--repos`, pick interactively |
-| `wt bundle list` / `wt bundle remove <name>` | List or delete bundles |
+| `wt bundle ls` / `wt bundle rm <name>` | List or delete bundles |
 | `wt cd [target]` | `cd` into a workspace, `<workspace>/<repo>`, or a primary checkout |
 | `wt open [target]` | Open the same targets in your editor; a primary checkout is first updated to the latest default branch (`--no-fetch` skips it) |
 | `wt sync [repo...]` | Fetch every repository in parallel and update the primary checkouts |
@@ -109,8 +109,9 @@ wt cleanup
 | `wt check [--fix]` | Health checks, with repairs for common problems |
 | `wt shell-init <zsh\|bash\|fish>` / `wt completion <shell>` | Shell integration and completion |
 
-Aliases (`ws`, `ls`, `rm`, `repo`, `cmd`) are listed next to each command in
-`wt --help` and in each command's help.
+Commands use short names: `ws`, `ls`, `rm` and `cmd`, which is also what tab
+completion suggests. The long names (`workspace`, `list`, `remove`,
+`commands`) work too, and `wt --help` lists them next to the short ones.
 
 `wt ws <name>` and `wt bundle <name>` without `--repos`/`--bundles` open an
 interactive picker, as do `wt cd` and `wt open` without an argument. When the
@@ -209,17 +210,17 @@ wt ws run -w PROJ-123 -- make test
 - **Exit status:** `wt ws run` fails if any repository fails; the others
   still run.
 
-Save the commands you repeat with `wt commands`:
+Save the commands you repeat with `wt cmd`:
 
 ```bash
-wt commands commit 'gca -m "$1" && gup && gp' --args message
+wt cmd commit 'gca -m "$1" && gup && gp' --args message
 # Saved command commit <message> (parallel):
 #   git commit --verbose --all -m "$1" && git pull --rebase && git push
-wt commands rebase 'git rebase -i origin/main' --serial
+wt cmd rebase 'git rebase -i origin/main' --serial
 
 wt ws run -c commit "fix login"
-wt commands                # list; 'wt commands commit' shows one
-wt commands remove rebase
+wt cmd                # list; 'wt cmd commit' shows one
+wt cmd rm rebase
 ```
 
 - **Aliases are expanded when saving**, so saved commands start instantly.
@@ -258,15 +259,15 @@ Bundles use the same forms, e.g.
   checks origin, so a stale remote-tracking branch never counts as a copy.
 - A local branch is deleted only when its commits are safe elsewhere: merged,
   or pushed to an `origin/<branch>` that is kept.
-- Remote branches are deleted only by `wt ws remove`, after you confirm (or
+- Remote branches are deleted only by `wt ws rm`, after you confirm (or
   pass `--delete-remote`), and only when merged: an open pull request, yours
   or a teammate's, is never closed. `wt cleanup` never deletes them.
 - A detached worktree whose commits are on no branch is never removed.
 - `wt sync` and `wt open` move a primary checkout only when it is clean,
   detached, and contains no commits of its own.
-- `wt repos remove` refuses while a workspace uses the repository, while the
+- `wt repos rm` refuses while a workspace uses the repository, while the
   primary checkout has changes or commits not on origin, and while a local
-  branch (for example one kept by `wt ws remove`) has commits not on origin.
+  branch (for example one kept by `wt ws rm`) has commits not on origin.
   Nothing on origin is touched.
 
 ### Cleanup
@@ -321,7 +322,7 @@ args = ["message"]
 serial = false              # true: one repository at a time, with your terminal
 ```
 
-`wt bundle`, `wt commands` and `wt integrations` rewrite this file, which
+`wt bundle`, `wt cmd` and `wt integrations` rewrite this file, which
 drops any comments in it.
 
 ## Integrations

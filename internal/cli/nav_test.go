@@ -241,13 +241,13 @@ func TestOpenRefreshesPrimaryCheckout(t *testing.T) {
 func TestHelpListsAliases(t *testing.T) {
 	env := testutil.Setup(t)
 	r := mustRun(t, env, nil, "--help")
-	for _, want := range []string{"workspace, ws ", "repos, repo ", "commands, cmd "} {
+	for _, want := range []string{"ws, workspace ", "repos, repo ", "cmd, commands "} {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("root help missing %q:\n%s", want, r.out)
 		}
 	}
 	r = mustRun(t, env, nil, "ws", "--help")
-	for _, want := range []string{"list, ls ", "remove, rm "} {
+	for _, want := range []string{"ls, list ", "rm, remove "} {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("ws help missing %q:\n%s", want, r.out)
 		}

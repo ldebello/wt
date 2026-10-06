@@ -86,7 +86,7 @@ func newCleanupCmd(app *App) *cobra.Command {
 		Long: `Fetch the repositories used by workspaces, classify every workspace against
 its base (repo:base) or origin/<default>, squash merges included, and remove
 the ones you select. Fully merged workspaces are preselected. Removal is the
-same as 'wt ws remove': nothing is forced and remote branches are never
+same as 'wt ws rm': nothing is forced and remote branches are never
 deleted.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

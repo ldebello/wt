@@ -17,7 +17,7 @@ import (
 	"github.com/ldebello/wt/internal/workspace"
 )
 
-var reservedBundleNames = []string{"list", "remove"}
+var reservedBundleNames = []string{"ls", "list", "rm", "remove"}
 
 func newBundleCmd(app *App) *cobra.Command {
 	var repos []string
@@ -35,7 +35,7 @@ preselected). --repos takes comma-separated values and can be repeated.`,
 		Example: `  wt bundle backend                        # pick repositories
   wt bundle backend --repos billing,worker
   wt bundle release --repos billing:release-2.4,web:release-2.4
-  wt bundle list                           # show every bundle`,
+  wt bundle ls                           # show every bundle`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -185,8 +185,8 @@ func branchChoices(ctx context.Context, ix repo.Index, repoName, autoBranch, wsB
 
 func newBundleListCmd(app *App) *cobra.Command {
 	return &cobra.Command{
-		Use:     "list",
-		Aliases: []string{"ls"},
+		Use:     "ls",
+		Aliases: []string{"list"},
 		Short:   "List bundles",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -210,8 +210,8 @@ func newBundleListCmd(app *App) *cobra.Command {
 
 func newBundleRemoveCmd(app *App) *cobra.Command {
 	return &cobra.Command{
-		Use:               "remove <name>",
-		Aliases:           []string{"rm"},
+		Use:               "rm <name>",
+		Aliases:           []string{"remove"},
 		Short:             "Delete a bundle (repositories and workspaces are not touched)",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeFirstArg(app.bundleNames),

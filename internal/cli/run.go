@@ -25,7 +25,7 @@ func newWorkspaceRunCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [command]",
 		Short: "Run a command in every repository of a workspace",
-		Long: `Run a shell command, or a saved one (-c, see 'wt commands'), in every
+		Long: `Run a shell command, or a saved one (-c, see 'wt cmd'), in every
 repository of the workspace you are in (or -w <workspace>).
 
 Quote the command so that ';', '&&' and '|' reach wt instead of your shell,
@@ -75,7 +75,7 @@ fails if any repository fails.`,
 				}
 				c, ok := cfg.Commands[saved]
 				if !ok {
-					return fmt.Errorf("unknown command %q (see 'wt commands list')", saved)
+					return fmt.Errorf("unknown command %q (see 'wt cmd ls')", saved)
 				}
 				if err := checkArgs(saved, c, args); err != nil {
 					return err
@@ -117,7 +117,7 @@ fails if any repository fails.`,
 		},
 	}
 	cmd.Flags().StringVarP(&wsName, "workspace", "w", "", "workspace to run in (default: the one you are in)")
-	cmd.Flags().StringVarP(&saved, "command", "c", "", "run a saved command (see 'wt commands')")
+	cmd.Flags().StringVarP(&saved, "command", "c", "", "run a saved command (see 'wt cmd')")
 	cmd.Flags().StringSliceVar(&repos, "repos", nil, "only these repositories (comma-separated, repeatable)")
 	cmd.Flags().BoolVar(&serial, "serial", false, "one repository at a time, with your terminal")
 	cmd.Flags().BoolVar(&parallel, "parallel", false, "all repositories at once (the default for direct commands)")
@@ -243,14 +243,14 @@ func shellJoin(args []string) string {
 	return strings.Join(quoted, " ")
 }
 
-var reservedCommandNames = []string{"list", "remove"}
+var reservedCommandNames = []string{"ls", "list", "rm", "remove"}
 
 func newCommandsCmd(app *App) *cobra.Command {
 	var argsNames []string
 	var serial bool
 	cmd := &cobra.Command{
-		Use:     "commands [name [command]]",
-		Aliases: []string{"cmd"},
+		Use:     "cmd [name [command]]",
+		Aliases: []string{"commands"},
 		Short:   "Save, show or list commands for 'wt ws run -c'",
 		Long: `Save a command to run in every repository of a workspace with
 'wt ws run -c <name>'. Commands are stored in settings.toml under
@@ -263,11 +263,11 @@ before running anything, and --args names them for usage and errors. A
 command runs in parallel unless saved with --serial (for commands that
 need your terminal).
 
-Without a command, 'wt commands <name>' shows it and 'wt commands' lists
+Without a command, 'wt cmd <name>' shows it and 'wt cmd' lists
 them all.`,
-		Example: `  wt commands commit 'gca -m "$1" && gup && gp' --args message
-  wt commands rebase 'git rebase -i origin/main' --serial
-  wt commands commit                     # show it
+		Example: `  wt cmd commit 'gca -m "$1" && gup && gp' --args message
+  wt cmd rebase 'git rebase -i origin/main' --serial
+  wt cmd commit                     # show it
   wt ws run -c commit "fix login"`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -285,15 +285,15 @@ them all.`,
 	cmd.ValidArgsFunction = completeFirstArg(app.commandNames)
 
 	list := &cobra.Command{
-		Use:     "list",
-		Aliases: []string{"ls"},
+		Use:     "ls",
+		Aliases: []string{"list"},
 		Short:   "List saved commands",
 		Args:    cobra.NoArgs,
 		RunE:    func(*cobra.Command, []string) error { return listCommands(app) },
 	}
 	remove := &cobra.Command{
-		Use:               "remove <name>",
-		Aliases:           []string{"rm"},
+		Use:               "rm <name>",
+		Aliases:           []string{"remove"},
 		Short:             "Delete a saved command",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeFirstArg(app.commandNames),
@@ -322,7 +322,7 @@ func saveCommand(cmd *cobra.Command, app *App, name, script string, names []stri
 		return err
 	}
 	if slices.Contains(reservedCommandNames, name) {
-		return fmt.Errorf("%q is reserved for 'wt commands %s'", name, name)
+		return fmt.Errorf("%q is reserved for 'wt cmd %s'", name, name)
 	}
 	cfg, err := app.Config()
 	if err != nil {
@@ -364,7 +364,7 @@ func showCommand(app *App, name string) error {
 	}
 	c, ok := cfg.Commands[name]
 	if !ok {
-		return fmt.Errorf("unknown command %q; save it with: wt commands %s '<command>'", name, name)
+		return fmt.Errorf("unknown command %q; save it with: wt cmd %s '<command>'", name, name)
 	}
 	app.printf("%s (%s):\n  %s\n", commandUsage(name, c), mode(c), c.Run)
 	return nil
@@ -377,7 +377,7 @@ func listCommands(app *App) error {
 	}
 	names := cfg.CommandNames()
 	if len(names) == 0 {
-		app.printf("No saved commands yet. Save one with: wt commands <name> '<command>'\n")
+		app.printf("No saved commands yet. Save one with: wt cmd <name> '<command>'\n")
 		return nil
 	}
 	tw := tabwriter.NewWriter(app.Out, 0, 4, 2, ' ', 0)

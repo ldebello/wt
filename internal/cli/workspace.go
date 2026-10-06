@@ -17,15 +17,15 @@ import (
 	"github.com/ldebello/wt/internal/workspace"
 )
 
-// reservedWorkspaceNames collide with `wt workspace` subcommands.
-var reservedWorkspaceNames = []string{"list", "remove", "run"}
+// reservedWorkspaceNames collide with `wt ws` subcommands.
+var reservedWorkspaceNames = []string{"ls", "list", "rm", "remove", "run"}
 
 func newWorkspaceCmd(app *App) *cobra.Command {
 	var repos, bundles []string
 	var noFetch bool
 	cmd := &cobra.Command{
-		Use:     "workspace <name>",
-		Aliases: []string{"ws"},
+		Use:     "ws <name>",
+		Aliases: []string{"workspace"},
 		Short:   "Create a workspace or add repositories to it",
 		Long: `Create ~/workspaces/<name>/ or add repositories to it, one git worktree per
 repository. Repositories already in the workspace are left untouched.
@@ -88,7 +88,7 @@ func createWorkspace(ctx context.Context, app *App, req createRequest) error {
 		return err
 	}
 	if slices.Contains(reservedWorkspaceNames, req.name) {
-		return fmt.Errorf("%q is reserved for 'wt workspace %s'", req.name, req.name)
+		return fmt.Errorf("%q is reserved for 'wt ws %s'", req.name, req.name)
 	}
 	mgr, err := app.Workspaces()
 	if err != nil {
@@ -196,7 +196,7 @@ func resolveSpecs(app *App, req createRequest) ([]workspace.Spec, error) {
 	for _, name := range splitList(req.bundles) {
 		b, ok := cfg.Bundles[name]
 		if !ok {
-			return nil, fmt.Errorf("unknown bundle %q (see 'wt bundle list')", name)
+			return nil, fmt.Errorf("unknown bundle %q (see 'wt bundle ls')", name)
 		}
 		specs, err := workspace.ParseSpecs(b.Repos)
 		if err != nil {
@@ -279,8 +279,8 @@ func pickWorkspaceContents(ctx context.Context, app *App, mgr workspace.Manager,
 
 func newWorkspaceListCmd(app *App) *cobra.Command {
 	return &cobra.Command{
-		Use:     "list",
-		Aliases: []string{"ls"},
+		Use:     "ls",
+		Aliases: []string{"list"},
 		Short:   "List workspaces with their repositories and branches",
 		Long:    "List workspaces. Each repository is shown as repo@branch; '*' marks uncommitted changes.",
 		Args:    cobra.NoArgs,
@@ -354,8 +354,8 @@ func newWorkspaceRemoveCmd(app *App) *cobra.Command {
 	var repos []string
 	var yes, deleteRemote bool
 	cmd := &cobra.Command{
-		Use:     "remove <name>",
-		Aliases: []string{"rm"},
+		Use:     "rm <name>",
+		Aliases: []string{"remove"},
 		Short:   "Remove a workspace, or some of its repositories",
 		Long: `Remove the worktrees of a workspace (or only --repos) and then the workspace
 directory. Nothing is forced: worktrees with uncommitted changes are kept.
@@ -365,8 +365,8 @@ branch, squash merges included; origin is checked first, so stale refs are
 never trusted. A local branch is deleted only if it is merged or pushed to
 origin. When confirmed (or with --delete-remote), merged branches are also
 deleted on origin; unmerged ones (open pull requests) are always kept.`,
-		Example: `  wt ws remove PROJ-123
-  wt ws remove PROJ-123 --repos worker        # drop one repository`,
+		Example: `  wt ws rm PROJ-123
+  wt ws rm PROJ-123 --repos worker        # drop one repository`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			remoteSet := cmd.Flags().Changed("delete-remote")
