@@ -80,6 +80,8 @@ wt cleanup
 | `wt workspace <name> [--repos ...] [--bundles ...]` | Create a workspace or add repositories to it (alias: `ws`); without flags, pick interactively |
 | `wt ws list` | List workspaces as `repo@branch` (`*` = uncommitted changes) |
 | `wt ws remove <name> [--repos ...]` | Remove a workspace, or only some of its repositories |
+| `wt ws run '<command>'` / `wt ws run -c <saved> [args]` | Run a command in every repository of a workspace |
+| `wt commands <name> '<command>'` / `wt commands [list]` / `wt commands remove <name>` | Save, list or delete commands for `wt ws run -c` |
 | `wt bundle <name> [--repos ...]` | Create or update a bundle; without `--repos`, pick interactively |
 | `wt bundle list` / `wt bundle remove <name>` | List or delete bundles |
 | `wt cd [target]` | `cd` into a workspace, `<workspace>/<repo>`, or a primary checkout |
@@ -161,6 +163,54 @@ Notes:
   `billing:release-2.4` instead: each workspace then gets its own branch.
 - **No metadata file.** A workspace's repositories are read from the
   worktrees it contains.
+
+### Running commands in every repository
+
+`wt ws run` runs a shell command in every repository of the workspace you
+are in (or `-w <workspace>`; `--repos a,b` limits it):
+
+```bash
+wt ws run 'git status -s'
+wt ws run 'gca -m "wip" && gp'      # aliases work
+wt ws run -w PROJ-123 -- make test
+```
+
+- **Quote the command**, so `;`, `&&` and `|` reach `wt` instead of your
+  shell (or put it after `--`).
+- **Aliases** are looked up once in your shell (zsh or bash) and expanded,
+  so they cost a fraction of a second per run, not per repository. Commands
+  without aliases start instantly. Shell functions run with your interactive
+  shell, which is slower.
+- **Parallel by default.** Each repository's output is printed as a block
+  when it finishes, followed by a summary (`billing ok · worker failed (exit
+  1)`). In parallel, commands can't read input: prompts fail instead of
+  hanging. Use `--serial` for commands that open an editor or ask questions.
+- **Environment:** each run gets `WT_WORKSPACE`, `WT_REPO` and `WT_BRANCH`.
+- **Exit status:** `wt ws run` fails if any repository fails; the others
+  still run.
+
+Save the commands you repeat with `wt commands`:
+
+```bash
+wt commands commit 'gca -m "$1" && gup && gp' --args message
+# Saved command commit <message> (parallel):
+#   git commit --verbose --all -m "$1" && git pull --rebase && git push
+wt commands rebase 'git rebase -i origin/main' --serial
+
+wt ws run -c commit "fix login"
+wt commands                # list; 'wt commands commit' shows one
+wt commands remove rebase
+```
+
+- **Aliases are expanded when saving**, so saved commands start instantly.
+  `wt` shows what will run. Shell functions can't be saved; write those
+  parts with plain commands.
+- **Arguments** are `$1`, `$2`... (`$@` for any number). `wt` checks they
+  are given before running anything; `--args` names them for usage and
+  errors.
+- **Mode:** parallel unless saved with `--serial`; `wt ws run --serial` or
+  `--parallel` overrides it for one run.
+- Saved commands live in `settings.toml` under `[commands.<name>]`.
 
 ### Bundles
 
@@ -244,10 +294,15 @@ template = "agents"         # writes AGENTS.md
 
 [bundles.backend]
 repos = ["billing", "worker@main"]
+
+[commands.commit]
+run = 'git commit --verbose --all -m "$1" && git pull --rebase && git push'
+args = ["message"]
+serial = false              # true: one repository at a time, with your terminal
 ```
 
-`wt bundle` and `wt integrations` rewrite this file, which drops any
-comments in it.
+`wt bundle`, `wt commands` and `wt integrations` rewrite this file, which
+drops any comments in it.
 
 ## Integrations
 
@@ -291,6 +346,7 @@ Code layout:
 - `internal/repo`: repository index, clone and sync.
 - `internal/workspace`: plan/apply, remove and status.
 - `internal/integration`: the integrations.
+- `internal/run`: `wt ws run`: alias expansion, parameters, parallel runner.
 - `internal/check`: health checks.
 - `internal/cli`: cobra commands.
 - `internal/ui`: prompts built on charmbracelet/huh.

@@ -19,10 +19,19 @@ const HomeEnv = "WT_HOME"
 
 // Config mirrors settings.toml.
 type Config struct {
-	Paths        Paths             `toml:"paths"`
-	Editor       Editor            `toml:"editor"`
-	Integrations Integrations      `toml:"integrations"`
-	Bundles      map[string]Bundle `toml:"bundles,omitempty"`
+	Paths        Paths              `toml:"paths"`
+	Editor       Editor             `toml:"editor"`
+	Integrations Integrations       `toml:"integrations"`
+	Bundles      map[string]Bundle  `toml:"bundles,omitempty"`
+	Commands     map[string]Command `toml:"commands,omitempty"`
+}
+
+// Command is a saved script for 'wt ws run -c <name>'. Run has its shell
+// aliases already expanded; $1, $2... are its arguments.
+type Command struct {
+	Run    string   `toml:"run"`
+	Args   []string `toml:"args,omitempty"`   // argument names, for usage and errors
+	Serial bool     `toml:"serial,omitempty"` // run one repository at a time, with the terminal attached
 }
 
 type Paths struct {
@@ -67,7 +76,8 @@ func Default() *Config {
 				"generic": {Enabled: false, Template: "agents"},
 			},
 		},
-		Bundles: map[string]Bundle{},
+		Bundles:  map[string]Bundle{},
+		Commands: map[string]Command{},
 	}
 }
 
@@ -101,6 +111,9 @@ func Load(wtHome string) (*Config, error) {
 	}
 	if cfg.Bundles == nil {
 		cfg.Bundles = map[string]Bundle{}
+	}
+	if cfg.Commands == nil {
+		cfg.Commands = map[string]Command{}
 	}
 	if cfg.Integrations.Harness == nil {
 		cfg.Integrations.Harness = map[string]Harness{}
@@ -157,6 +170,16 @@ func (c *Config) WorkspacesDir() (string, error) { return ExpandHome(c.Paths.Wor
 func (c *Config) BundleNames() []string {
 	names := make([]string, 0, len(c.Bundles))
 	for name := range c.Bundles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// CommandNames returns saved command names sorted alphabetically.
+func (c *Config) CommandNames() []string {
+	names := make([]string, 0, len(c.Commands))
+	for name := range c.Commands {
 		names = append(names, name)
 	}
 	sort.Strings(names)

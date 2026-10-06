@@ -18,7 +18,7 @@ import (
 )
 
 // reservedWorkspaceNames collide with `wt workspace` subcommands.
-var reservedWorkspaceNames = []string{"list", "remove"}
+var reservedWorkspaceNames = []string{"list", "remove", "run"}
 
 func newWorkspaceCmd(app *App) *cobra.Command {
 	var repos, bundles []string
@@ -72,7 +72,7 @@ origin/<branch> is fast-forwarded; one that has diverged is left as is.
 	cmd.ValidArgsFunction = completeFirstArg(app.workspaceNames)
 	registerListCompletion(cmd, "repos", func([]string) []string { return app.repoNames() })
 	registerListCompletion(cmd, "bundles", func([]string) []string { return app.bundleNames() })
-	cmd.AddCommand(newWorkspaceListCmd(app), newWorkspaceRemoveCmd(app))
+	cmd.AddCommand(newWorkspaceListCmd(app), newWorkspaceRemoveCmd(app), newWorkspaceRunCmd(app))
 	return cmd
 }
 
