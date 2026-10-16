@@ -113,7 +113,7 @@ func reportFindings(_ context.Context, app *App, findings []check.Finding) error
 		fmt.Fprintf(tw, "[%s]\t%s\t%s\n", f.Level, f.Area, msg)
 		for _, line := range strings.Split(f.Hint, "\n") {
 			if line != "" {
-				fmt.Fprintf(tw, "\t\t  %s\n", line)
+				fmt.Fprintf(tw, "\t\t%s\n", line)
 			}
 		}
 		if f.Level == check.Error {
