@@ -17,7 +17,7 @@ func TestCheck(t *testing.T) {
 	mustRun(t, env, nil, "ws", "W", "--repos", "api")
 
 	r := mustRun(t, env, nil, "check")
-	for _, want := range []string{"[ok] git", "[ok] repo api healthy", "[ok] workspaces 1 workspaces", "[ok] editor", "[ok] shell",
+	for _, want := range []string{"[ok] git", "[ok] repos 1 repositories, all healthy", "[ok] workspaces 1 workspaces", "[ok] editor", "[ok] shell",
 		"[ok] codegraph not installed", "npm install -g @colbymchenry/codegraph", "codegraph telemetry off",
 		"[ok] harness generic disabled enable: wt integrations harness generic"} {
 		if !strings.Contains(squash(r.out), want) {

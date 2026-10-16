@@ -71,8 +71,14 @@ func Run(ctx context.Context, in Inputs) []Finding {
 	if err != nil {
 		findings = append(findings, Finding{Area: "repos", Level: Error, Message: err.Error()})
 	}
+	var repoProblems []Finding
 	for _, name := range names {
-		findings = append(findings, checkRepo(ctx, in.Index, name)...)
+		repoProblems = append(repoProblems, checkRepo(ctx, in.Index, name)...)
+	}
+	if len(repoProblems) == 0 && len(names) > 0 {
+		findings = append(findings, ok("repos", fmt.Sprintf("%d repositories, all healthy", len(names))))
+	} else {
+		findings = append(findings, repoProblems...)
 	}
 	findings = append(findings, checkWorkspaces(in.Workspaces)...)
 
@@ -157,11 +163,7 @@ func checkRepo(ctx context.Context, ix repo.Index, name string) []Finding {
 	}
 
 	var findings []Finding
-	problems := 0
-	add := func(f Finding) {
-		findings = append(findings, f)
-		problems++
-	}
+	add := func(f Finding) { findings = append(findings, f) }
 	if refspecs, _ := git.Run(ctx, bare, "config", "--get-all", "remote.origin.fetch"); !strings.Contains(refspecs, fetchRefspec) {
 		add(Finding{Area: area, Level: Warn, Message: "origin fetch refspec is not " + fetchRefspec,
 			fix: func(ctx context.Context) error {
@@ -205,9 +207,6 @@ func checkRepo(ctx context.Context, ix repo.Index, name string) []Finding {
 			f.Hint = primary + " exists but is not a checkout; move it away and run wt check --fix"
 		}
 		add(f)
-	}
-	if problems == 0 {
-		findings = append(findings, ok(area, "healthy"))
 	}
 	return findings
 }
