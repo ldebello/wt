@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"strings"
 	"text/tabwriter"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
 	"github.com/ldebello/wt/internal/check"
@@ -50,17 +52,31 @@ primary checkouts.`,
 	return cmd
 }
 
-// levelTag renders "[ok]"/"[warn]"/"[error]" in the matching color (the same
-// green/yellow/red used by 'wt ws status').
-func (a *App) levelTag(l check.Level) string {
-	color := colorOK
-	switch l {
-	case check.Warn:
-		color = colorWarn
-	case check.Error:
-		color = colorBad
+// colorizeLevelTags writes s — tabwriter's plain-text output — to app.Out,
+// coloring each leading "[ok]"/"[warn]"/"[error]" tag (the same green/
+// yellow/red used by 'wt ws status'). It recolors after alignment rather
+// than coloring before it: tabwriter counts a styled tag's invisible escape
+// bytes as part of its width, and an indented hint line's empty, unstyled
+// cells don't carry that same overhead, so coloring first throws off the
+// padding between a finding and its hint.
+func (a *App) colorizeLevelTags(s string) {
+	tags := []struct {
+		tag   string
+		color lipgloss.Color
+	}{
+		{"[ok]", colorOK},
+		{"[warn]", colorWarn},
+		{"[error]", colorBad},
 	}
-	return a.style().NewStyle().Foreground(color).Render("[" + l.String() + "]")
+	for _, line := range strings.Split(strings.TrimSuffix(s, "\n"), "\n") {
+		for _, t := range tags {
+			if rest, ok := strings.CutPrefix(line, t.tag); ok {
+				line = a.style().NewStyle().Foreground(t.color).Render(t.tag) + rest
+				break
+			}
+		}
+		fmt.Fprintln(a.Out, line)
+	}
 }
 
 func checkInputs(app *App) (check.Inputs, error) {
@@ -85,7 +101,8 @@ func checkInputs(app *App) (check.Inputs, error) {
 }
 
 func reportFindings(_ context.Context, app *App, findings []check.Finding) error {
-	tw := tabwriter.NewWriter(app.Out, 0, 4, 2, ' ', 0)
+	var buf bytes.Buffer
+	tw := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
 	errors, fixable := 0, 0
 	for _, f := range findings {
 		msg := f.Message
@@ -93,7 +110,7 @@ func reportFindings(_ context.Context, app *App, findings []check.Finding) error
 			msg += " (fixable)"
 			fixable++
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", app.levelTag(f.Level), f.Area, msg)
+		fmt.Fprintf(tw, "[%s]\t%s\t%s\n", f.Level, f.Area, msg)
 		for _, line := range strings.Split(f.Hint, "\n") {
 			if line != "" {
 				fmt.Fprintf(tw, "\t\t  %s\n", line)
@@ -104,6 +121,7 @@ func reportFindings(_ context.Context, app *App, findings []check.Finding) error
 		}
 	}
 	tw.Flush()
+	app.colorizeLevelTags(buf.String())
 	if fixable > 0 {
 		app.printf("\nRun 'wt check --fix' to repair %d problem(s).\n", fixable)
 	}
