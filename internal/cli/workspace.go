@@ -9,6 +9,7 @@ import (
 	"sync"
 	"text/tabwriter"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
 	"github.com/ldebello/wt/internal/git"
@@ -18,7 +19,49 @@ import (
 )
 
 // reservedWorkspaceNames collide with `wt ws` subcommands.
-var reservedWorkspaceNames = []string{"ls", "list", "rm", "remove", "run"}
+var reservedWorkspaceNames = []string{"ls", "list", "rm", "remove", "run", "status"}
+
+// ANSI colors used for 'wt ws status': plain numbers so they follow the
+// terminal's own theme (light or dark) instead of fixed hex values.
+const (
+	colorOK   = lipgloss.Color("2") // green: merged, safe to remove
+	colorWarn = lipgloss.Color("3") // yellow: pushed but not merged, or dirty
+	colorBad  = lipgloss.Color("1") // red: unpushed/unmerged commits, or an error
+	colorDim  = lipgloss.Color("8") // gray: no changes of its own
+)
+
+// statusLine renders one member's status for 'wt ws status': an icon and
+// color (merged: green check, pushed/open PR: yellow dot, unmerged or
+// unpushed: red cross, untouched: dim, error: red cross) plus the plain
+// description, with a dirty worktree always flagged regardless of the rest.
+// keepUnmerged is [remove].keep_unmerged_branches: when it's off (the
+// default), an unmerged/unpushed branch's description gets a note that 'wt
+// ws rm' deletes it automatically, instead of Describe()'s "do it yourself"
+// hint, which would otherwise be misleading.
+func (a *App) statusLine(ms workspace.MemberStatus, keepUnmerged bool) string {
+	icon, color := "✗", colorBad
+	atRisk := false
+	switch {
+	case ms.Err != nil:
+	case ms.Untouched:
+		icon, color = "·", colorDim
+	case ms.Merged:
+		icon, color = "✔", colorOK
+	case ms.Pushed:
+		icon, color = "●", colorWarn
+	default:
+		atRisk = true
+	}
+	text := ms.Describe()
+	if atRisk && !keepUnmerged {
+		text = fmt.Sprintf("%d commit(s) not pushed or merged into %s — wt ws rm deletes this automatically", ms.Commits, ms.Base)
+	}
+	line := a.style().NewStyle().Foreground(color).Render(icon + " " + text)
+	if ms.Dirty && ms.Err == nil {
+		line = a.style().NewStyle().Foreground(colorWarn).Render("± ") + line
+	}
+	return line
+}
 
 func newWorkspaceCmd(app *App) *cobra.Command {
 	var repos, bundles []string
@@ -72,7 +115,7 @@ origin/<branch> is fast-forwarded; one that has diverged is left as is.
 	cmd.ValidArgsFunction = completeFirstArg(app.workspaceNames)
 	registerListCompletion(cmd, "repos", func([]string) []string { return app.repoNames() })
 	registerListCompletion(cmd, "bundles", func([]string) []string { return app.bundleNames() })
-	cmd.AddCommand(newWorkspaceListCmd(app), newWorkspaceRemoveCmd(app), newWorkspaceRunCmd(app))
+	cmd.AddCommand(newWorkspaceListCmd(app), newWorkspaceRemoveCmd(app), newWorkspaceRunCmd(app), newWorkspaceStatusCmd(app))
 	return cmd
 }
 
@@ -307,6 +350,64 @@ func newWorkspaceListCmd(app *App) *cobra.Command {
 	}
 }
 
+func newWorkspaceStatusCmd(app *App) *cobra.Command {
+	var noFetch bool
+	cmd := &cobra.Command{
+		Use:   "status <name>",
+		Short: "Show whether each repository in a workspace is merged, pushed, or has work of its own",
+		Long: `Classify every repository in the workspace against its base (repo:base) or
+origin/<default>, squash merges included: merged, pushed but not merged (an
+open pull request), has commits not pushed anywhere, or no changes of its
+own. These are the same checks 'wt ws rm' runs before asking you to confirm,
+so you can run this any time without removing anything.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			cfg, err := app.Config()
+			if err != nil {
+				return err
+			}
+			mgr, err := app.Workspaces()
+			if err != nil {
+				return err
+			}
+			ws, err := mgr.Load(args[0])
+			if err != nil {
+				return err
+			}
+			if !noFetch {
+				repos := usedRepos(mgr, []workspace.Workspace{ws})
+				for name, err := range mgr.Index.Fetch(ctx, repos) {
+					if err != nil {
+						app.warnf("fetch %s: %v\n", name, err)
+					}
+				}
+			}
+			st := mgr.Status(ctx, ws)
+			app.printf("Workspace %s: %s\n", ws.Name, ws.Path)
+			if len(st.Members) == 0 {
+				app.printf("  (empty)\n")
+				return nil
+			}
+			tw := tabwriter.NewWriter(app.Out, 0, 4, 2, ' ', 0)
+			for _, ms := range st.Members {
+				fmt.Fprintf(tw, "  %s\t%s\n", memberLabel(ms.Member), app.statusLine(ms, cfg.Remove.KeepUnmergedBranches))
+			}
+			tw.Flush()
+			label, safe := st.Summary()
+			icon, color := "○", colorWarn
+			if safe {
+				icon, color = "✔", colorOK
+			}
+			app.printf("%s\n", app.style().NewStyle().Foreground(color).Render(icon+" "+label))
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&noFetch, "no-fetch", false, "use the current remote-tracking refs instead of fetching")
+	cmd.ValidArgsFunction = completeFirstArg(app.workspaceNames)
+	return cmd
+}
+
 // dirtyMembers runs `git status` for every member of every workspace in
 // parallel and returns the paths of the ones with uncommitted changes.
 func dirtyMembers(ctx context.Context, list []workspace.Workspace) map[string]bool {
@@ -335,19 +436,26 @@ func describeMembers(ws workspace.Workspace, dirty map[string]bool) string {
 	}
 	parts := make([]string, len(ws.Members))
 	for i, m := range ws.Members {
-		label := m.Repo + "@" + m.Branch
-		switch {
-		case m.Broken:
-			label = m.Repo + " (broken)"
-		case m.Branch == "":
-			label = m.Repo + " (detached)"
-		}
+		label := memberLabel(m)
 		if dirty[m.Path] {
 			label += "*"
 		}
 		parts[i] = label
 	}
 	return strings.Join(parts, "  ")
+}
+
+// memberLabel is how a member is shown in lists: repo@branch, or
+// "repo (detached)"/"repo (broken)" when it has no branch to show.
+func memberLabel(m workspace.Member) string {
+	switch {
+	case m.Broken:
+		return m.Repo + " (broken)"
+	case m.Branch == "":
+		return m.Repo + " (detached)"
+	default:
+		return m.Repo + "@" + m.Branch
+	}
 }
 
 func newWorkspaceRemoveCmd(app *App) *cobra.Command {
@@ -358,13 +466,23 @@ func newWorkspaceRemoveCmd(app *App) *cobra.Command {
 		Aliases: []string{"remove"},
 		Short:   "Remove a workspace, or some of its repositories",
 		Long: `Remove the worktrees of a workspace (or only --repos) and then the workspace
-directory. Nothing is forced: worktrees with uncommitted changes are kept.
+directory. Nothing is forced: worktrees with uncommitted changes are kept,
+and a branch checked out in another worktree never is.
 
-"Merged" means merged into the branch's base (repo:base) or the default
-branch, squash merges included; origin is checked first, so stale refs are
-never trusted. A local branch is deleted only if it is merged or pushed to
-origin. When confirmed (or with --delete-remote), merged branches are also
-deleted on origin; unmerged ones (open pull requests) are always kept.`,
+Once a worktree is gone, its local branch goes too, merged or not: with no
+workspace left to use it from, an orphaned branch has no purpose. Set
+keep_unmerged_branches = true under [remove] in settings.toml to go back to
+only deleting merged or pushed branches, keeping the rest around.
+
+Origin is never affected by that setting. "Merged" means merged into the
+branch's base (repo:base) or the default branch, squash merges included;
+origin is checked first, so stale refs are never trusted. When confirmed (or
+with --delete-remote), merged branches are also deleted on origin; unmerged
+ones (open pull requests) are always kept, and you're only asked about this
+at all when some target actually has a branch on origin to act on.
+
+Before asking for confirmation, wt warns about any branch it cannot safely
+judge (checked out elsewhere) or, with keep_unmerged_branches, would keep.`,
 		Example: `  wt ws rm PROJ-123
   wt ws rm PROJ-123 --repos worker        # drop one repository`,
 		Args: cobra.ExactArgs(1),
@@ -411,9 +529,27 @@ func removeWorkspace(ctx context.Context, app *App, name string, repos []string,
 		}
 	}
 
+	cfg, err := app.Config()
+	if err != nil {
+		return err
+	}
 	app.printf("Workspace %s: %s\n", name, ws.Path)
 	for _, m := range targets {
 		app.printf("  %s@%s\n", m.Repo, m.Branch)
+	}
+	statuses := mgr.CheckBranches(ctx, targets)
+	hasRemote := false
+	for _, s := range statuses {
+		hasRemote = hasRemote || s.RemoteExists
+		switch {
+		case s.Safe:
+		case !s.Overridable:
+			app.warnf("  %s@%s: %s; the branch will be kept\n", s.Repo, s.Branch, s.Reason)
+		case cfg.Remove.KeepUnmergedBranches:
+			app.warnf("  %s@%s: not merged or deleted yet (%s); the branch will be kept\n", s.Repo, s.Branch, s.Reason)
+		default:
+			app.warnf("  %s@%s: will be force-deleted — not merged or pushed anywhere (irreversible)\n", s.Repo, s.Branch)
+		}
 	}
 	if !yes {
 		title := fmt.Sprintf("Remove workspace %s?", name)
@@ -430,7 +566,10 @@ func removeWorkspace(ctx context.Context, app *App, name string, repos []string,
 		if !ok {
 			return ui.ErrAborted
 		}
-		if !remoteSet && len(targets) > 0 {
+		// Asking makes no sense when no target even has a remote branch: a
+		// merge often deletes it already, and a blanket "any targets" check
+		// used to ask anyway, leaving you unsure whether it was there at all.
+		if !remoteSet && hasRemote {
 			if deleteRemote, err = app.UI.Confirm("Also delete the merged branches on origin?", false); err != nil {
 				return err
 			}
@@ -444,14 +583,18 @@ func removeWorkspace(ctx context.Context, app *App, name string, repos []string,
 // deletes the workspace directory.
 func performRemoval(ctx context.Context, app *App, mgr workspace.Manager, ws workspace.Workspace, targets []workspace.Member, partial, deleteRemote bool) error {
 	name := ws.Name
-	results := mgr.RemoveMembers(ctx, targets, deleteRemote)
+	cfg, err := app.Config()
+	if err != nil {
+		return err
+	}
+	results := mgr.RemoveMembers(ctx, targets, deleteRemote, !cfg.Remove.KeepUnmergedBranches)
 	tw := tabwriter.NewWriter(app.Out, 0, 4, 2, ' ', 0)
 	for _, r := range results {
 		fmt.Fprintf(tw, "  %s\t%s\n", r.Repo, r.Describe())
 	}
 	tw.Flush()
 
-	ws, err := mgr.Load(name)
+	ws, err = mgr.Load(name)
 	if err != nil {
 		return err
 	}

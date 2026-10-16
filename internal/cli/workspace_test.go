@@ -81,6 +81,8 @@ func TestWorkspaceLifecycle(t *testing.T) {
 func TestWorkspaceRemoveAsksForConfirmation(t *testing.T) {
 	env := setupRepos(t, "api")
 	mustRun(t, env, nil, "ws", "W", "--repos", "api")
+	// Pushed, so there is actually something to ask about deleting on origin.
+	testutil.Git(t, wsPath(env, "W", "api"), "push", "-q", "-u", "origin", "W")
 
 	r := run(t, env, nil, "ws", "remove", "W")
 	if r.e == nil || !strings.Contains(r.e.Error(), "--yes") {
@@ -96,6 +98,108 @@ func TestWorkspaceRemoveAsksForConfirmation(t *testing.T) {
 	r = mustRun(t, env, fake, "ws", "remove", "W")
 	if len(fake.asked) != 2 || !strings.Contains(fake.asked[1], "origin") {
 		t.Errorf("asked: %v", fake.asked)
+	}
+}
+
+// TestWorkspaceRemoveSkipsRemoteConfirmWithoutARemoteBranch covers the fix
+// for asking "Also delete the merged branches on origin?" even when a merge
+// had already deleted origin's copy (or it was simply never pushed): there
+// is nothing to act on, so the question no longer shows up to confuse you
+// about whether it's still there.
+func TestWorkspaceRemoveSkipsRemoteConfirmWithoutARemoteBranch(t *testing.T) {
+	env := setupRepos(t, "api")
+	mustRun(t, env, nil, "ws", "W", "--repos", "api")
+
+	fake := &fakeUI{confirms: []bool{true}}
+	r := mustRun(t, env, fake, "ws", "remove", "W")
+	if len(fake.asked) != 1 {
+		t.Errorf("asked: %v (expected no question about origin)", fake.asked)
+	}
+	if !strings.Contains(r.out, "Removed workspace W") {
+		t.Errorf("remove output:\n%s", r.out)
+	}
+}
+
+// TestWorkspaceRemoveDeletesUnmergedBranchesByDefault covers the default:
+// once the workspace is gone, an unmerged, unpushed local branch is useless
+// to keep around, so it is deleted too (flagged as forced, never silent).
+func TestWorkspaceRemoveDeletesUnmergedBranchesByDefault(t *testing.T) {
+	env := setupRepos(t, "api")
+	mustRun(t, env, nil, "ws", "W", "--repos", "api")
+	testutil.Commit(t, wsPath(env, "W", "api"), "W", "a.txt", "mine")
+
+	r := mustRun(t, env, nil, "ws", "remove", "W", "--yes")
+	if !strings.Contains(r.err, "api@W: will be force-deleted") || !strings.Contains(r.err, "irreversible") {
+		t.Errorf("stderr:\n%s", r.err)
+	}
+	if !strings.Contains(r.out, "branch W deleted (not merged or pushed anywhere)") {
+		t.Errorf("remove output:\n%s", r.out)
+	}
+}
+
+// TestWorkspaceRemoveKeepsUnmergedBranchesWhenConfigured covers the opt-out:
+// [remove] keep_unmerged_branches = true restores the old, cautious default.
+func TestWorkspaceRemoveKeepsUnmergedBranchesWhenConfigured(t *testing.T) {
+	env := setupRepos(t, "api")
+	testutil.WriteFile(t, filepath.Join(env.WTHome, "settings.toml"), "[remove]\nkeep_unmerged_branches = true\n")
+	mustRun(t, env, nil, "ws", "W", "--repos", "api")
+	testutil.Commit(t, wsPath(env, "W", "api"), "W", "a.txt", "mine")
+
+	r := mustRun(t, env, nil, "ws", "remove", "W", "--yes")
+	if !strings.Contains(r.err, "api@W: not merged or deleted yet") || !strings.Contains(r.err, "not pushed or merged") {
+		t.Errorf("stderr:\n%s", r.err)
+	}
+	if !strings.Contains(r.out, "branch W kept") {
+		t.Errorf("removal did not keep the branch:\n%s", r.out)
+	}
+}
+
+func TestWorkspaceStatus(t *testing.T) {
+	env := testutil.Setup(t)
+	up := env.NewUpstream(t, "api", "main")
+	mustRun(t, env, nil, "clone", up)
+	mustRun(t, env, nil, "ws", "W", "--repos", "api")
+	wt := wsPath(env, "W", "api")
+
+	r := mustRun(t, env, nil, "ws", "status", "W")
+	if !strings.Contains(r.out, "api@W") || !strings.Contains(r.out, "no changes of its own") || !strings.Contains(r.out, "no commits yet") {
+		t.Errorf("status output:\n%s", r.out)
+	}
+
+	// A local commit, neither pushed nor merged: by default 'wt ws rm' would
+	// delete it, so status says so instead of "delete it yourself".
+	testutil.Commit(t, wt, "W", "a.txt", "mine")
+	r = mustRun(t, env, nil, "ws", "status", "W")
+	if !strings.Contains(r.out, "commit(s) not pushed or merged") || !strings.Contains(r.out, "wt ws rm deletes this automatically") || !strings.Contains(r.out, "contains unpushed commits") {
+		t.Errorf("status output:\n%s", r.out)
+	}
+
+	// With keep_unmerged_branches = true, status points to the manual command
+	// instead, since 'wt ws rm' would no longer delete it for you.
+	testutil.WriteFile(t, filepath.Join(env.WTHome, "settings.toml"), "[remove]\nkeep_unmerged_branches = true\n")
+	r = mustRun(t, env, nil, "ws", "status", "W")
+	if !strings.Contains(r.out, "delete it yourself: git -C") || strings.Contains(r.out, "deletes this automatically") {
+		t.Errorf("status output:\n%s", r.out)
+	}
+	testutil.WriteFile(t, filepath.Join(env.WTHome, "settings.toml"), "")
+
+	// Pushed, but not merged yet: an open pull request.
+	testutil.Git(t, wt, "push", "-q", "-u", "origin", "W")
+	r = mustRun(t, env, nil, "ws", "status", "W")
+	if !strings.Contains(r.out, "pushed, not merged yet") {
+		t.Errorf("status output:\n%s", r.out)
+	}
+
+	// Squash-merged upstream.
+	testutil.Commit(t, up, "main", "a.txt", "mine")
+	r = mustRun(t, env, nil, "ws", "status", "W")
+	if !strings.Contains(r.out, "api@W") || !strings.Contains(r.out, "merged (safe to remove)") {
+		t.Errorf("status output:\n%s", r.out)
+	}
+	for _, line := range strings.Split(r.out, "\n") {
+		if strings.Contains(line, "api@W") && !strings.Contains(line, "merged") {
+			t.Errorf("api@W not reported as merged:\n%s", r.out)
+		}
 	}
 }
 

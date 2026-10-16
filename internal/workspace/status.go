@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/ldebello/wt/internal/git"
 )
@@ -17,7 +19,35 @@ type MemberStatus struct {
 	// Untouched is set for members with nothing of their own: on the default
 	// branch without local commits, or no commits and never pushed.
 	Untouched bool
-	Err       error
+	// Base is origin/<base> (repo:base) or origin/<default>, set whenever
+	// Commits/Merged/Pushed do (i.e. Err is nil and Untouched is false).
+	Base string
+	// Bare is the repository's bare path, for the manual-delete hint when
+	// Commits are not pushed or merged.
+	Bare string
+	Err  error
+}
+
+// Describe returns a one-line summary of the status.
+func (ms MemberStatus) Describe() string {
+	if ms.Err != nil {
+		return "error: " + ms.Err.Error()
+	}
+	var parts []string
+	if ms.Dirty {
+		parts = append(parts, "uncommitted changes")
+	}
+	switch {
+	case ms.Untouched:
+		parts = append(parts, "no changes of its own")
+	case ms.Merged:
+		parts = append(parts, "merged")
+	case ms.Pushed:
+		parts = append(parts, "pushed, not merged yet")
+	default:
+		parts = append(parts, fmt.Sprintf("%d commit(s) ", ms.Commits)+notMergedHint(ms.Base, ms.Bare, ms.Branch))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // Status is a workspace with the status of each member.
@@ -42,6 +72,7 @@ func (m Manager) memberStatus(ctx context.Context, member Member) MemberStatus {
 		ms.Err = errMissingRepo
 		return ms
 	}
+	ms.Bare = m.Index.BarePath(member.Repo)
 	if ms.Dirty, ms.Err = git.IsDirty(ctx, member.Path); ms.Err != nil {
 		return ms
 	}
@@ -52,8 +83,9 @@ func (m Manager) memberStatus(ctx context.Context, member Member) MemberStatus {
 	}
 	base := "origin/" + def
 	if member.Branch != "" {
-		base = baseRef(ctx, m.Index.BarePath(member.Repo), member.Branch, def)
+		base = baseRef(ctx, ms.Bare, member.Branch, def)
 	}
+	ms.Base = base
 	if ms.Commits, ms.Err = git.CountCommits(ctx, member.Path, base, "HEAD"); ms.Err != nil {
 		return ms
 	}

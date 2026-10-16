@@ -96,6 +96,7 @@ wt cleanup
 | `wt repos rm <repo>` | Delete a repository from the index (refused while it is in use or has work not on origin) |
 | `wt ws <name> [--repos ...] [--bundles ...]` | Create a workspace or add repositories to it (also `wt workspace`); without flags, pick interactively |
 | `wt ws ls` | List workspaces as `repo@branch` (`*` = uncommitted changes) |
+| `wt ws status <name>` | Show whether each repository is merged, pushed, or has work of its own (icons and color; plain in scripts/pipes) |
 | `wt ws rm <name> [--repos ...]` | Remove a workspace, or only some of its repositories |
 | `wt ws run '<command>'` / `wt ws run -c <saved> [args]` | Run a command in every repository of a workspace |
 | `wt cmd <name> '<command>'` / `wt cmd [ls]` / `wt cmd rm <name>` | Save, list or delete commands for `wt ws run -c` |
@@ -251,24 +252,38 @@ Bundles use the same forms, e.g.
 
 ### Safety
 
-- Nothing is forced. A worktree with uncommitted or untracked changes is
-  never removed.
+- Nothing is forced on worktrees: one with uncommitted or untracked changes
+  is never removed, and neither is a detached worktree whose commits are on
+  no branch, or a branch checked out in another worktree.
 - "Merged" means merged into the branch's base (for `repo:base`, recorded in
   the branch's git config as `branch.<name>.wtBase`) or the default branch,
   with regular, rebase or squash merges. Before deleting anything, `wt`
   checks origin, so a stale remote-tracking branch never counts as a copy.
-- A local branch is deleted only when its commits are safe elsewhere: merged,
-  or pushed to an `origin/<branch>` that is kept.
-- Remote branches are deleted only by `wt ws rm`, after you confirm (or
-  pass `--delete-remote`), and only when merged: an open pull request, yours
-  or a teammate's, is never closed. `wt cleanup` never deletes them.
-- A detached worktree whose commits are on no branch is never removed.
+- Once a workspace member's worktree is removed, its local branch goes with
+  it, merged or not: there is no workspace left to use it from. Set
+  `keep_unmerged_branches = true` under `[remove]` in `settings.toml` to go
+  back to only deleting branches that are merged or pushed, keeping the rest.
+  This never affects origin, only the local branch.
+- Before asking you to confirm, `wt ws rm` warns about any branch it cannot
+  safely judge (checked out elsewhere) or, with `keep_unmerged_branches`,
+  would keep instead of deleting. `wt ws status <name>` runs the same checks
+  any time, without removing anything.
+- `wt` only reads git, never GitHub: it cannot tell an abandoned branch (a
+  pull request closed without merging) from one you still need. With
+  `keep_unmerged_branches`, it prints the command to delete such a branch
+  yourself once you've checked it's safe to let go.
+- Remote branches are deleted only by `wt ws rm`, after you confirm (or pass
+  `--delete-remote`), and only when merged: an open pull request, yours or a
+  teammate's, is never closed. You are only asked about this when a target
+  actually has a branch on origin — a merge often deletes it already, so
+  asking regardless would leave you unsure whether it was even there.
+  `wt cleanup` never deletes remote branches.
 - `wt sync` and `wt open` move a primary checkout only when it is clean,
   detached, and contains no commits of its own.
 - `wt repos rm` refuses while a workspace uses the repository, while the
   primary checkout has changes or commits not on origin, and while a local
-  branch (for example one kept by `wt ws rm`) has commits not on origin.
-  Nothing on origin is touched.
+  branch (for example one kept via `keep_unmerged_branches`) has commits not
+  on origin. Nothing on origin is touched.
 
 ### Cleanup
 
@@ -304,6 +319,9 @@ command = "code"            # default: $EDITOR, then code. Aliases don't work; e
 
 [open]
 default = "workspaces"      # group shown first in the `wt open`/`wt cd` picker: all (default), workspaces, repositories
+
+[remove]
+keep_unmerged_branches = false  # default: 'wt ws rm' deletes a local branch even if unmerged/unpushed, once its worktree is gone
 
 [integrations.codegraph]
 enabled = false

@@ -122,12 +122,13 @@ deleted.`,
 			for i, ws := range list {
 				label, ok := statuses[i].Summary()
 				desc := fmt.Sprintf("%s (%s)", ws.Name, strings.Join(ws.RepoNames(), ", "))
-				mark := "[ ]"
+				icon, color, mark := "○", colorWarn, "[ ]"
 				if ok {
-					mark = "[x]"
+					icon, color, mark = "✔", colorOK, "[x]"
 					safe = append(safe, ws.Name)
 				}
-				fmt.Fprintf(tw, "  %s %s\t-> %s\n", mark, desc, label)
+				coloredLabel := app.style().NewStyle().Foreground(color).Render(icon + " " + label)
+				fmt.Fprintf(tw, "  %s %s\t-> %s\n", mark, desc, coloredLabel)
 				options[i] = ui.Option{Label: desc + "  -> " + label, Value: ws.Name, Selected: ok}
 			}
 			tw.Flush()

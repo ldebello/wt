@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/ldebello/wt/internal/config"
 	"github.com/ldebello/wt/internal/repo"
 	"github.com/ldebello/wt/internal/ui"
@@ -15,13 +17,24 @@ import (
 // App holds the dependencies shared by all commands. Tests build their own
 // App with buffers and a fake Prompter.
 type App struct {
-	Out    io.Writer
-	Err    io.Writer
-	UI     ui.Prompter
-	Home   string // wt home directory (~/.wt)
-	cfg    *config.Config
-	cfgErr error
-	loaded bool
+	Out      io.Writer
+	Err      io.Writer
+	UI       ui.Prompter
+	Home     string // wt home directory (~/.wt)
+	cfg      *config.Config
+	cfgErr   error
+	loaded   bool
+	renderer *lipgloss.Renderer
+}
+
+// style lazily builds a renderer bound to a.Out, so color follows whether
+// Out is actually a terminal (never on in tests, which write to a buffer)
+// and NO_COLOR/terminal capabilities are respected.
+func (a *App) style() *lipgloss.Renderer {
+	if a.renderer == nil {
+		a.renderer = lipgloss.NewRenderer(a.Out)
+	}
+	return a.renderer
 }
 
 // NewApp returns an App wired to the real terminal.

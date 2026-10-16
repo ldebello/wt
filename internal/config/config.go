@@ -22,6 +22,7 @@ type Config struct {
 	Paths        Paths              `toml:"paths"`
 	Editor       Editor             `toml:"editor"`
 	Open         Open               `toml:"open"`
+	Remove       Remove             `toml:"remove"`
 	Integrations Integrations       `toml:"integrations"`
 	Bundles      map[string]Bundle  `toml:"bundles,omitempty"`
 	Commands     map[string]Command `toml:"commands,omitempty"`
@@ -50,6 +51,17 @@ type Open struct {
 	// Default is the group shown when the interactive picker (`wt open`,
 	// `wt cd`) opens: "all" (default), "workspaces" or "repositories".
 	Default string `toml:"default,omitempty"`
+}
+
+type Remove struct {
+	// KeepUnmergedBranches restores the old, cautious default: a local
+	// branch whose commits are not merged or pushed anywhere else is kept
+	// (not deleted) when its workspace member is removed. False (the
+	// default) deletes it anyway, once the worktree that held it is gone:
+	// with no workspace left to use it from, most people have no use for an
+	// orphaned local branch. This never affects origin: a remote branch is
+	// still only deleted when merged, after you confirm (or --delete-remote).
+	KeepUnmergedBranches bool `toml:"keep_unmerged_branches,omitempty"`
 }
 
 type Integrations struct {

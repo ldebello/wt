@@ -50,6 +50,19 @@ primary checkouts.`,
 	return cmd
 }
 
+// levelTag renders "[ok]"/"[warn]"/"[error]" in the matching color (the same
+// green/yellow/red used by 'wt ws status').
+func (a *App) levelTag(l check.Level) string {
+	color := colorOK
+	switch l {
+	case check.Warn:
+		color = colorWarn
+	case check.Error:
+		color = colorBad
+	}
+	return a.style().NewStyle().Foreground(color).Render("[" + l.String() + "]")
+}
+
 func checkInputs(app *App) (check.Inputs, error) {
 	if _, err := app.Config(); err != nil {
 		return check.Inputs{}, fmt.Errorf("settings: %w", err)
@@ -80,7 +93,7 @@ func reportFindings(_ context.Context, app *App, findings []check.Finding) error
 			msg += " (fixable)"
 			fixable++
 		}
-		fmt.Fprintf(tw, "[%s]\t%s\t%s\n", f.Level, f.Area, msg)
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", app.levelTag(f.Level), f.Area, msg)
 		for _, line := range strings.Split(f.Hint, "\n") {
 			if line != "" {
 				fmt.Fprintf(tw, "\t\t  %s\n", line)

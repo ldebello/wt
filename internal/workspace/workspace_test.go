@@ -324,7 +324,7 @@ func TestRemoveMembers(t *testing.T) {
 	testutil.WriteFile(t, filepath.Join(ws, "dirty", "d.txt"), "d")
 
 	loaded, _ := f.m.Load("W")
-	results := f.m.RemoveMembers(ctx, loaded.Members, true)
+	results := f.m.RemoveMembers(ctx, loaded.Members, true, false)
 	byRepo := map[string]RemoveResult{}
 	for _, r := range results {
 		byRepo[r.Repo] = r
@@ -354,6 +354,61 @@ func TestRemoveMembers(t *testing.T) {
 	left, err := f.m.RemoveDir("W")
 	if err != nil || !reflect.DeepEqual(left, []string{"dirty"}) {
 		t.Errorf("RemoveDir = %v, %v", left, err)
+	}
+}
+
+// TestRemoveMembersDeleteUnmerged covers the default local-branch deletion:
+// once the worktree is gone, a branch not merged or pushed anywhere is
+// deleted anyway, flagged as forced. Origin is unaffected by this.
+func TestRemoveMembersDeleteUnmerged(t *testing.T) {
+	f := newFixture(t, "local")
+	f.clone(t, "local")
+	f.create(t, "W", []Spec{{"local", "", ""}})
+	testutil.Commit(t, filepath.Join(f.m.Path("W"), "local"), "W", "l.txt", "l")
+
+	loaded, _ := f.m.Load("W")
+	r := f.m.RemoveMembers(context.Background(), loaded.Members, false, true)[0]
+	if !r.Removed || !r.BranchDeleted || !r.BranchForced {
+		t.Errorf("result = %+v", r)
+	}
+	if testutil.Git(t, f.ix.BarePath("local"), "branch", "--list", "W") != "" {
+		t.Error("unmerged branch was not deleted")
+	}
+}
+
+// TestCheckBranches covers the removal preview: it must agree with what
+// RemoveMembers above actually does, without touching anything.
+func TestCheckBranches(t *testing.T) {
+	f := newFixture(t, "merged", "local")
+	for _, name := range []string{"merged", "local"} {
+		f.clone(t, name)
+	}
+	f.create(t, "W", []Spec{{"merged", "", ""}, {"local", "", ""}})
+	ws := f.m.Path("W")
+
+	testutil.Commit(t, filepath.Join(ws, "merged"), "W", "m.txt", "m")
+	testutil.Commit(t, f.ups["merged"], "main", "m.txt", "m")
+	testutil.Git(t, f.ix.BarePath("merged"), "fetch", "-q", "origin")
+	testutil.Commit(t, filepath.Join(ws, "local"), "W", "l.txt", "l")
+
+	loaded, _ := f.m.Load("W")
+	byRepo := map[string]BranchStatus{}
+	for _, s := range f.m.CheckBranches(context.Background(), loaded.Members) {
+		byRepo[s.Repo] = s
+	}
+	if s := byRepo["merged"]; !s.Safe || s.Reason != "" {
+		t.Errorf("merged: %+v", s)
+	}
+	if s := byRepo["local"]; s.Safe || !strings.Contains(s.Reason, "not pushed or merged") {
+		t.Errorf("local: %+v", s)
+	}
+
+	// Nothing was touched: the worktrees and branches are all still there.
+	if _, err := os.Stat(filepath.Join(ws, "local")); err != nil {
+		t.Errorf("CheckBranches removed the worktree: %v", err)
+	}
+	if testutil.Git(t, f.ix.BarePath("local"), "branch", "--list", "W") == "" {
+		t.Error("CheckBranches deleted the branch")
 	}
 }
 
@@ -419,7 +474,7 @@ func TestRemoveKeepsDetachedCommits(t *testing.T) {
 	testutil.Git(t, wt, "commit", "-q", "-m", "detached work")
 
 	loaded, _ := f.m.Load("W")
-	r := f.m.RemoveMembers(context.Background(), loaded.Members, false)[0]
+	r := f.m.RemoveMembers(context.Background(), loaded.Members, false, false)[0]
 	if r.Removed || !strings.Contains(r.Skipped, "not on any branch") {
 		t.Errorf("detached with commits: %+v", r)
 	}
@@ -427,7 +482,7 @@ func TestRemoveKeepsDetachedCommits(t *testing.T) {
 	// Back on a branch-contained commit, it is removed.
 	testutil.Git(t, wt, "checkout", "-q", "--detach", "W")
 	loaded, _ = f.m.Load("W")
-	if r := f.m.RemoveMembers(context.Background(), loaded.Members, false)[0]; !r.Removed {
+	if r := f.m.RemoveMembers(context.Background(), loaded.Members, false, false)[0]; !r.Removed {
 		t.Errorf("detached on a branch commit: %+v", r)
 	}
 }
@@ -444,7 +499,7 @@ func TestRemoveDoesNotTrustStaleOriginRefs(t *testing.T) {
 	testutil.Git(t, f.ups["app"], "branch", "-q", "-D", "W")
 
 	loaded, _ := f.m.Load("W")
-	r := f.m.RemoveMembers(context.Background(), loaded.Members, false)[0]
+	r := f.m.RemoveMembers(context.Background(), loaded.Members, false, false)[0]
 	if !r.Removed || r.BranchDeleted || !strings.Contains(r.BranchKept, "not pushed or merged") {
 		t.Errorf("result = %+v", r)
 	}
@@ -486,7 +541,7 @@ func TestBaseBranchesAreJudgedAgainstTheirBase(t *testing.T) {
 
 	// Removal deletes the local branch and, being merged, origin/HOTFIX too.
 	ws, _ := f.m.Load("HOTFIX")
-	r := f.m.RemoveMembers(ctx, ws.Members, true)[0]
+	r := f.m.RemoveMembers(ctx, ws.Members, true, false)[0]
 	if !r.BranchDeleted || !r.RemoteDeleted {
 		t.Errorf("remove = %+v", r)
 	}
