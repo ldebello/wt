@@ -83,7 +83,7 @@ func TestWorkspaceWithBundles(t *testing.T) {
 		t.Errorf("options: %+v", opts)
 	}
 	r = mustRun(t, env, nil, "ws", "list")
-	if !strings.Contains(r.out, "V  db@other  tools@V  web@V") {
+	if !strings.Contains(r.out, "V:  db@other  tools@V  web@V") {
 		t.Errorf("list:\n%s", r.out)
 	}
 

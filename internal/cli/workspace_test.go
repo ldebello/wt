@@ -345,7 +345,7 @@ func TestWorkspaceBaseVersusBranch(t *testing.T) {
 	// A second hotfix from the same base works: each has its own branch.
 	mustRun(t, env, nil, "ws", "HOTFIX-78", "--repos", "billing:release-2.4")
 	r = mustRun(t, env, nil, "ws", "list")
-	if !strings.Contains(r.out, "HOTFIX-77  billing@HOTFIX-77  web@HOTFIX-77") || !strings.Contains(r.out, "HOTFIX-78  billing@HOTFIX-78") {
+	if !strings.Contains(r.out, "HOTFIX-77:  billing@HOTFIX-77  web@HOTFIX-77") || !strings.Contains(r.out, "HOTFIX-78:  billing@HOTFIX-78") {
 		t.Errorf("list:\n%s", r.out)
 	}
 	if _, err := os.Stat(wsPath(env, "HOTFIX-78", "billing", "fix.txt")); err != nil {

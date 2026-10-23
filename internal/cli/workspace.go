@@ -325,8 +325,11 @@ func newWorkspaceListCmd(app *App) *cobra.Command {
 		Use:     "ls",
 		Aliases: []string{"list"},
 		Short:   "List workspaces with their repositories and branches",
-		Long:    "List workspaces. Each repository is shown as repo@branch; '*' marks uncommitted changes.",
-		Args:    cobra.NoArgs,
+		Long: `List workspaces. Each repository is shown as repo@branch; '*' marks
+uncommitted changes. The workspace name is bold and followed by ':', since a
+member's branch is normally named after it too (e.g. repo@PROJ-123) and
+could otherwise run into the name with nothing to tell them apart.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mgr, err := app.Workspaces()
 			if err != nil {
@@ -343,7 +346,8 @@ func newWorkspaceListCmd(app *App) *cobra.Command {
 			dirty := dirtyMembers(cmd.Context(), list)
 			tw := tabwriter.NewWriter(app.Out, 0, 4, 2, ' ', 0)
 			for _, ws := range list {
-				fmt.Fprintf(tw, "%s\t%s\n", ws.Name, describeMembers(ws, dirty))
+				name := app.style().NewStyle().Bold(true).Render(ws.Name + ":")
+				fmt.Fprintf(tw, "%s\t%s\n", name, describeMembers(ws, dirty))
 			}
 			return tw.Flush()
 		},
