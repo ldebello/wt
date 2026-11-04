@@ -45,7 +45,7 @@ func TestIntegrationsCommand(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin:/bin") // no codegraph
 
 	r := mustRun(t, env, nil, "integrations")
-	for _, want := range []string{"codegraph        disabled", "harness claude   enabled   CLAUDE.md", "harness generic  disabled  AGENTS.md"} {
+	for _, want := range []string{"codegraph             disabled", "folder-customization  disabled", "harness claude        enabled   CLAUDE.md", "harness generic       disabled  AGENTS.md"} {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("list missing %q:\n%s", want, r.out)
 		}
@@ -87,5 +87,28 @@ func TestIntegrationsCommand(t *testing.T) {
 
 	if r := run(t, env, nil, "integrations", "harness", "cursor"); r.e == nil || !strings.Contains(r.e.Error(), "invalid argument") {
 		t.Errorf("unknown harness: %v", r.e)
+	}
+}
+
+func TestFolderCustomizationIntegration(t *testing.T) {
+	env := setupRepos(t, "api", "web")
+
+	r := mustRun(t, env, nil, "integrations", "folder-customization")
+	if !strings.Contains(r.out, "j3lte.folder-customization") || !strings.Contains(r.out, "Enabled folder-customization") {
+		t.Errorf("enable output should point to the extension:\n%s", r.out)
+	}
+
+	mustRun(t, env, nil, "ws", "W", "--repos", "api,web#ro")
+	settings, err := os.ReadFile(wsPath(env, "W", ".vscode", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(settings), `"path": "web"`) || strings.Contains(string(settings), `"api"`) {
+		t.Errorf("settings.json:\n%s", settings)
+	}
+
+	mustRun(t, env, nil, "ws", "rm", "W", "--yes")
+	if _, err := os.Stat(wsPath(env, "W")); err == nil {
+		t.Error("workspace directory left behind by .vscode")
 	}
 }

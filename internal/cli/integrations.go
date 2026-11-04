@@ -21,6 +21,8 @@ func newIntegrationsCmd(app *App) *cobra.Command {
 		Long: `Integrations run when a workspace is created or its repositories change:
 
   codegraph          index the whole workspace with CodeGraph
+  folder-customization  mark read-only repositories in VS Code's explorer
+                     (needs the Folder Customization extension)
   harness claude     generate CLAUDE.md at the workspace root
   harness generic    generate AGENTS.md at the workspace root (other agents)
 
@@ -43,6 +45,25 @@ Generated files start with a marker line; delete it to keep your edits.`,
 		},
 	}
 	codegraph.Flags().BoolVar(&disableCodegraph, "disable", false, "disable instead of enable")
+
+	var disableFolders bool
+	folders := &cobra.Command{
+		Use:   "folder-customization",
+		Short: "Enable (or --disable) VS Code folder badges for read-only repositories",
+		Long: `Write folder-customization.folders in <workspace>/.vscode/settings.json so
+read-only repositories (repo#ro) get a colour and a "Read Only" badge in
+VS Code's explorer. Other settings and entries in that file are kept.
+
+Needs the Folder Customization extension:
+  ` + integration.ExtensionURL,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return toggleIntegration(cmd.Context(), app, "folder-customization", !disableFolders, func(cfg *config.Config, on bool) {
+				cfg.Integrations.FolderCustomization.Enabled = on
+			})
+		},
+	}
+	folders.Flags().BoolVar(&disableFolders, "disable", false, "disable instead of enable")
 
 	var disableHarness bool
 	var tmpl string
@@ -68,7 +89,7 @@ Generated files start with a marker line; delete it to keep your edits.`,
 	harness.Flags().BoolVar(&disableHarness, "disable", false, "disable instead of enable")
 	harness.Flags().StringVar(&tmpl, "template", "", "template name (~/.wt/templates/<name>.md or built-in claude/agents)")
 
-	cmd.AddCommand(codegraph, harness)
+	cmd.AddCommand(codegraph, folders, harness)
 	return cmd
 }
 

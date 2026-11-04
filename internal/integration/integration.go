@@ -54,10 +54,13 @@ type Integration interface {
 	OnWorkspaceRemoved(ctx context.Context, ws Workspace) error
 }
 
-// All returns every integration: codegraph, then the claude and generic
-// harnesses.
+// All returns every integration: codegraph, folder-customization, then the
+// claude and generic harnesses.
 func All(cfg *config.Config, wtHome string, out io.Writer) []Integration {
-	list := []Integration{&Codegraph{enabled: cfg.Integrations.Codegraph.Enabled, out: out}}
+	list := []Integration{
+		&Codegraph{enabled: cfg.Integrations.Codegraph.Enabled, out: out},
+		&FolderCustomization{enabled: cfg.Integrations.FolderCustomization.Enabled, out: out},
+	}
 	for _, name := range HarnessNames {
 		list = append(list, NewHarness(name, cfg.Integrations.Harness[name], wtHome, cfg.Integrations.Codegraph.Enabled))
 	}

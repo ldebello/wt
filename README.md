@@ -73,6 +73,7 @@ wt clone git@github.com:acme/worker.git
 
 # 2. Optional: integrations
 wt integrations codegraph          # index each workspace with CodeGraph
+wt integrations folder-customization  # badge read-only repos in VS Code
 wt integrations harness claude     # generate CLAUDE.md (enabled by default)
 
 # 3. Optional: a bundle of repositories you often use together
@@ -346,6 +347,9 @@ keep_unmerged_branches = false  # default: 'wt ws rm' deletes a local branch eve
 [integrations.codegraph]
 enabled = false
 
+[integrations.folder_customization]
+enabled = false
+
 [integrations.harness.claude]
 enabled = true
 template = "claude"         # ~/.wt/templates/claude.md overrides the built-in template
@@ -381,6 +385,23 @@ If one fails, `wt` prints a warning and the workspace is still ready.
   codegraph telemetry off          # optional
   wt integrations codegraph
   ```
+- **folder-customization** marks the read-only repositories (`repo#ro`) in
+  VS Code's explorer: it writes `folder-customization.folders` in the
+  workspace's `.vscode/settings.json`, giving each one a colour and a
+  `Read Only` badge. It needs the VS Code extension
+  [Folder Customization](https://marketplace.visualstudio.com/items?itemName=j3lte.folder-customization)
+  (`code --install-extension j3lte.folder-customization`); `wt` reminds you
+  when you enable it, and `wt check` repeats it.
+
+  ```bash
+  wt integrations folder-customization
+  ```
+
+  Only wt's own entries (badge `Read Only`) are replaced; other settings and
+  entries you added are kept, and a repository you customised by hand is not
+  overwritten. If `settings.json` has comments, `wt` warns and leaves it
+  alone (it cannot rewrite them). Removing the workspace removes wt's
+  entries.
 - **harness** writes an instruction file for AI agents at the workspace
   root:
   - `claude` writes `CLAUDE.md`; `generic` writes `AGENTS.md` (read by

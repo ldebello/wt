@@ -65,8 +65,9 @@ type Remove struct {
 }
 
 type Integrations struct {
-	Codegraph Toggle             `toml:"codegraph"`
-	Harness   map[string]Harness `toml:"harness"`
+	Codegraph           Toggle             `toml:"codegraph"`
+	FolderCustomization Toggle             `toml:"folder_customization"`
+	Harness             map[string]Harness `toml:"harness"`
 }
 
 type Toggle struct {

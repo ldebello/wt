@@ -113,6 +113,9 @@ func checkIntegration(i integration.Integration) Finding {
 			}
 			return Finding{Area: i.Name(), Level: Error, Message: msg, Hint: hint}
 		}
+		if _, isFolders := i.(*integration.FolderCustomization); isFolders {
+			return Finding{Area: i.Name(), Level: OK, Message: "enabled (needs the VS Code extension)", Hint: integration.FolderCustomizationHint}
+		}
 		return ok(i.Name(), "enabled")
 	}
 	if _, isCodegraph := i.(*integration.Codegraph); isCodegraph && err != nil {
