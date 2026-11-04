@@ -75,6 +75,8 @@ repository. Repositories already in the workspace are left untouched.
 
 Without --repos or --bundles, pick bundles and repositories interactively
 (ctrl+b on a repository chooses its branch, ctrl+r marks it read-only).
+On an existing workspace its repositories come preselected; unselect one to
+be asked to remove it.
 --repos and --bundles take comma-separated values and can be repeated. Each
 repository is one of:
 
@@ -131,7 +133,7 @@ type createRequest struct {
 	noFetch        bool
 }
 
-func createWorkspace(ctx context.Context, app *App, req createRequest) error {
+func createWorkspace(ctx context.Context, app *App, req createRequest) (err error) {
 	if err := repo.ValidName("workspace", req.name); err != nil {
 		return err
 	}
@@ -142,14 +144,26 @@ func createWorkspace(ctx context.Context, app *App, req createRequest) error {
 	if err != nil {
 		return err
 	}
+	var drop []string
 	if req.pick {
-		if req.repos, req.bundles, err = pickWorkspaceContents(ctx, app, mgr, req.name); err != nil {
+		if req.repos, req.bundles, drop, err = pickWorkspaceContents(ctx, app, mgr, req.name); err != nil {
 			return err
 		}
 	}
 	specs, err := resolveSpecs(app, req)
 	if err != nil {
 		return err
+	}
+	if len(drop) > 0 && len(specs) == 0 {
+		return removeWorkspace(ctx, app, req.name, drop, false, false, false)
+	}
+	if len(drop) > 0 {
+		// Additions go first; the removal then asks for its own confirmation.
+		defer func() {
+			if rerr := removeWorkspace(ctx, app, req.name, drop, false, false, false); rerr != nil && err == nil {
+				err = rerr
+			}
+		}()
 	}
 
 	if !req.noFetch {
@@ -267,19 +281,19 @@ const (
 
 // pickWorkspaceContents offers bundles and repositories in one list
 // (filterable by kind). ChoiceKey picks a specific branch for a repository.
-// Repositories already in the workspace are shown selected and are left
-// untouched whatever the answer.
-func pickWorkspaceContents(ctx context.Context, app *App, mgr workspace.Manager, wsName string) (repos, bundles []string, err error) {
+// Repositories already in the workspace are shown selected; unselecting one
+// returns it in drop, to be removed after confirmation.
+func pickWorkspaceContents(ctx context.Context, app *App, mgr workspace.Manager, wsName string) (repos, bundles, drop []string, err error) {
 	cfg, err := app.Config()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	names, err := mgr.Index.List()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if len(names) == 0 {
-		return nil, nil, errors.New("no repositories in the index yet; add one with: wt clone <url>")
+		return nil, nil, nil, errors.New("no repositories in the index yet; add one with: wt clone <url>")
 	}
 	var current workspace.Workspace
 	if mgr.Exists(wsName) {
@@ -309,12 +323,26 @@ func pickWorkspaceContents(ctx context.Context, app *App, mgr workspace.Manager,
 	}
 
 	title := "Add to workspace " + wsName
+	if len(current.Members) > 0 {
+		title = "Workspace " + wsName + " (unselect a repository to remove it)"
+	}
 	picked, err := app.UI.MultiSelect(title, options)
 	if errors.Is(err, ui.ErrNoTTY) {
-		return nil, nil, errors.New("no terminal to pick from; pass --repos <repo,...> or --bundles <bundle,...>")
+		return nil, nil, nil, errors.New("no terminal to pick from; pass --repos <repo,...> or --bundles <bundle,...>")
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	pickedRepo := map[string]bool{}
+	for _, o := range picked {
+		if name, ok := strings.CutPrefix(o.Value, repoPrefix); ok {
+			pickedRepo[name] = true
+		}
+	}
+	for _, m := range current.Members {
+		if !pickedRepo[m.Repo] {
+			drop = append(drop, m.Repo)
+		}
 	}
 	for _, o := range picked {
 		if name, ok := strings.CutPrefix(o.Value, bundlePrefix); ok {
@@ -329,7 +357,7 @@ func pickWorkspaceContents(ctx context.Context, app *App, mgr workspace.Manager,
 			}
 		}
 	}
-	return repos, bundles, nil
+	return repos, bundles, drop, nil
 }
 
 func newWorkspaceListCmd(app *App) *cobra.Command {

@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ldebello/wt/internal/testutil"
+	"github.com/ldebello/wt/internal/ui"
 )
 
 // setupRepos isolates the environment and clones one upstream per name.
@@ -34,8 +36,7 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	}
 
 	// Without --repos/--bundles the picker opens, with members preselected.
-	// Members stay untouched even if deselected.
-	fake := &fakeUI{multi: [][]string{{"repo:tools"}}}
+	fake := &fakeUI{multi: [][]string{{"repo:api", "repo:tools", "repo:web"}}}
 	r = mustRun(t, env, fake, "workspace", "PROJ-1")
 	if !strings.Contains(r.out, "tools") || strings.Contains(r.out, "api") {
 		t.Errorf("unexpected output:\n%s", r.out)
@@ -44,9 +45,24 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	if opts := fake.offered[0]; len(opts) != 3 || !opts[0].Selected || opts[1].Selected || !opts[2].Selected || opts[0].Value != "repo:api" {
 		t.Errorf("picker options: %+v", opts)
 	}
-	if fake.asked[0] != "Add to workspace PROJ-1" {
+	if fake.asked[0] != "Workspace PROJ-1 (unselect a repository to remove it)" {
 		t.Errorf("asked %v", fake.asked)
 	}
+
+	// Unselecting a member asks to remove it.
+	fake = &fakeUI{multi: [][]string{{"repo:api", "repo:web"}}, confirms: []bool{false}}
+	if r = run(t, env, fake, "ws", "PROJ-1"); !errors.Is(r.e, ui.ErrAborted) {
+		t.Errorf("declined removal: %v", r.e)
+	}
+	if _, err := os.Stat(wsPath(env, "PROJ-1", "tools")); err != nil {
+		t.Errorf("tools removed despite declining: %v", err)
+	}
+	fake = &fakeUI{multi: [][]string{{"repo:api", "repo:web"}}, confirms: []bool{true}}
+	r = mustRun(t, env, fake, "ws", "PROJ-1")
+	if _, err := os.Stat(wsPath(env, "PROJ-1", "tools")); err == nil || !strings.Contains(r.out, "tools") {
+		t.Errorf("tools not removed:\n%s", r.out)
+	}
+	mustRun(t, env, nil, "ws", "PROJ-1", "--repos", "tools")
 
 	testutil.WriteFile(t, wsPath(env, "PROJ-1", "web", "dirty.txt"), "x")
 	r = mustRun(t, env, nil, "ws", "list")
@@ -292,7 +308,7 @@ func TestWorkspacePickerBranchChoices(t *testing.T) {
 	mustRun(t, env, nil, "clone", env.NewUpstream(t, "web", "main"))
 	mustRun(t, env, nil, "ws", "W", "--repos", "web")
 
-	fake := &fakeUI{multi: [][]string{{"repo:api=@feature/x"}}}
+	fake := &fakeUI{multi: [][]string{{"repo:api=@feature/x", "repo:web"}}}
 	r := mustRun(t, env, fake, "ws", "W")
 	if !strings.Contains(r.out, "branch feature/x tracking origin/feature/x") {
 		t.Errorf("output:\n%s", r.out)

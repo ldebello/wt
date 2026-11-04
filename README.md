@@ -114,6 +114,10 @@ Commands use short names: `ws`, `ls`, `rm` and `cmd`, which is also what tab
 completion suggests. The long names (`workspace`, `list`, `remove`,
 `commands`) work too, and `wt --help` lists them next to the short ones.
 
+Running `wt ws <name>` on an existing workspace shows its repositories already
+selected; unselecting one asks to remove it (same checks and confirmation as
+`wt ws rm <name> --repos ...`).
+
 `wt ws <name>` and `wt bundle <name>` without `--repos`/`--bundles` open an
 interactive picker, as do `wt cd` and `wt open` without an argument. When the
 list mixes kinds (bundles and repositories, or workspaces and repositories),
