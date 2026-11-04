@@ -85,11 +85,12 @@ func (Terminal) MultiSelect(title string, options []Option) ([]Option, error) {
 		var values []string
 		field := huh.NewMultiSelect[string]().
 			Title(title).
-			Description(help(options, groups, view)).
+			Description(strings.TrimSpace(help(options, groups, view) + "   type to filter")).
 			Options(huhOptions(visible)...).
 			Filterable(true).
+			Height(listHeight(len(visible))).
 			Value(&values)
-		key, hovered, err := run(field, field.Hovered, false, labels(visible))
+		key, hovered, err := run(field, field.Hovered, true, labels(visible))
 		if err != nil {
 			return nil, err
 		}
@@ -193,6 +194,7 @@ func (Terminal) Select(title string, options []Option, startGroup string) (strin
 			Title(title).
 			Description(strings.TrimSpace(help(options, groups, view) + "   type to filter")).
 			Options(huhOptions(visible)...).
+			Height(listHeight(len(visible))).
 			Value(&value)
 		key, _, err := run(field, nil, true, labels(visible))
 		if err != nil || key != GroupKey {
@@ -313,7 +315,7 @@ func run(field huh.Field, hovered func() (string, bool), typeToFilter bool, labe
 	form := huh.NewForm(huh.NewGroup(field)).WithShowHelp(true)
 	form.SubmitCmd = tea.Quit
 	form.CancelCmd = tea.Interrupt
-	m := &keyCatcher{form: form, hovered: hovered, typeToFilter: typeToFilter, query: filterQuery(field), labels: labels}
+	m := &keyCatcher{form: form, hovered: hovered, typeToFilter: typeToFilter, query: filterQuery(field), scroll: scrollHint(field), labels: labels}
 	_, err = tea.NewProgram(m, tea.WithOutput(os.Stderr)).Run()
 	if errors.Is(err, tea.ErrInterrupted) || form.State == huh.StateAborted {
 		return "", "", ErrAborted
@@ -328,7 +330,8 @@ type keyCatcher struct {
 	hovered      func() (string, bool)
 	typeToFilter bool
 	filtering    bool
-	query        func() string // the filter text, when the field has one
+	query        func() string                 // the filter text, when the field has one
+	scroll       func() (atTop, atBottom bool) // the field's viewport scroll state, when it has one
 	labels       []string
 	key          string
 	hoveredValue string
@@ -374,10 +377,16 @@ func (m *keyCatcher) View() string {
 	if m.key != "" {
 		return ""
 	}
-	if m.query == nil {
-		return m.form.View()
+	view := m.form.View() // renders the field, including its viewport: scroll must be read after this
+	if m.query != nil {
+		view = highlight(view, m.query(), m.labels)
 	}
-	return highlight(m.form.View(), m.query(), m.labels)
+	if m.scroll != nil {
+		if atTop, atBottom := m.scroll(); !atTop || !atBottom {
+			view += scrollIndicator(atTop, atBottom)
+		}
+	}
+	return view
 }
 
 // labels returns the labels huh shows for options.

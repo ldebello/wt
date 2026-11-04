@@ -61,6 +61,34 @@ func TestHelpAndLabels(t *testing.T) {
 	}
 }
 
+func TestScrollHintDegradesGracefully(t *testing.T) {
+	// Not a pointer, or a field shape scrollHint doesn't recognize: nil,
+	// same as filterQuery, rather than a panic if huh's internals change.
+	if scrollHint(struct{}{}) != nil {
+		t.Error("expected nil for a non-pointer")
+	}
+	if scrollHint(&struct{ viewport int }{}) != nil {
+		t.Error("expected nil when viewport isn't a viewport.Model")
+	}
+}
+
+func TestScrollIndicator(t *testing.T) {
+	cases := []struct {
+		atTop, atBottom bool
+		want            string
+	}{
+		{true, true, ""},
+		{true, false, "\n↓ more below"},
+		{false, true, "\n↑ more above"},
+		{false, false, "\n↑ more above    ↓ more below"},
+	}
+	for _, c := range cases {
+		if got := scrollIndicator(c.atTop, c.atBottom); got != c.want {
+			t.Errorf("scrollIndicator(%v, %v) = %q; want %q", c.atTop, c.atBottom, got, c.want)
+		}
+	}
+}
+
 func TestToggleReadOnly(t *testing.T) {
 	choices := func() ([]Choice, error) { return nil, nil }
 	options := []Option{

@@ -130,6 +130,11 @@ The result is shown next to the repository in the same syntax as `--repos`
 `--bundles` always take a value: comma-separated (no spaces, or quote the
 list), or repeat the flag (`--repos a --repos b:develop`).
 
+Typing starts filtering right away in every picker (single or multi-select),
+no need to press `/` first. A long list is capped to the terminal height
+instead of scrolling past it unseen, and `↑ more above` / `↓ more below`
+shows up next to it when there's more than fits on screen.
+
 ### Workspaces and branches
 
 `<default>` is each repository's default branch (`main`, `master`, `develop`,
