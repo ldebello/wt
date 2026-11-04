@@ -326,6 +326,62 @@ func TestWorkspacePickerBranchChoices(t *testing.T) {
 	}
 }
 
+// TestWorkspaceReadOnlyPicker covers ctrl+r in the interactive picker: it
+// turns into the same #ro spec as typing --repos docs#ro by hand.
+func TestWorkspaceReadOnlyPicker(t *testing.T) {
+	env := setupRepos(t, "api", "docs")
+
+	fake := &fakeUI{multi: [][]string{{"repo:api", "repo:docs+ro"}}}
+	r := mustRun(t, env, fake, "ws", "W")
+	if !strings.Contains(r.out, "api") || !strings.Contains(r.out, "read-only at the default branch") {
+		t.Errorf("output:\n%s", r.out)
+	}
+	ls := mustRun(t, env, nil, "ws", "ls")
+	if !strings.Contains(ls.out, "docs  (read-only)") {
+		t.Errorf("ws ls:\n%s", ls.out)
+	}
+}
+
+func TestWorkspaceReadOnlyRepo(t *testing.T) {
+	env := setupRepos(t, "docs")
+
+	r := mustRun(t, env, nil, "ws", "W", "--repos", "docs#ro")
+	if !strings.Contains(r.out, "read-only at the default branch") {
+		t.Errorf("create output:\n%s", r.out)
+	}
+
+	status := mustRun(t, env, nil, "ws", "status", "W")
+	if !strings.Contains(status.out, "docs  (read-only)") || !strings.Contains(status.out, "read-only at the default branch") {
+		t.Errorf("status output:\n%s", status.out)
+	}
+
+	// Removing it is unconditional: no branch to judge, nothing kept.
+	remove := mustRun(t, env, nil, "ws", "remove", "W", "--yes")
+	if !strings.Contains(remove.out, "worktree removed (read-only)") || !strings.Contains(remove.out, "Removed workspace W") {
+		t.Errorf("remove output:\n%s", remove.out)
+	}
+}
+
+// TestWorkspaceReadOnlyConflictsWithWritable covers switching a repo between
+// read-only and regular: wt asks you to remove it first either way, rather
+// than silently converting it.
+func TestWorkspaceReadOnlyConflictsWithWritable(t *testing.T) {
+	env := setupRepos(t, "docs")
+	mustRun(t, env, nil, "ws", "W", "--repos", "docs#ro")
+
+	r := run(t, env, nil, "ws", "W", "--repos", "docs")
+	if r.e == nil || !strings.Contains(r.e.Error(), "read-only") {
+		t.Errorf("expected error switching to writable, got %v", r.e)
+	}
+
+	mustRun(t, env, nil, "ws", "remove", "W", "--repos", "docs", "--yes")
+	mustRun(t, env, nil, "ws", "W", "--repos", "docs")
+	r = run(t, env, nil, "ws", "W", "--repos", "docs#ro")
+	if r.e == nil || !strings.Contains(r.e.Error(), "writable") {
+		t.Errorf("expected error switching to read-only, got %v", r.e)
+	}
+}
+
 func TestWorkspaceBaseVersusBranch(t *testing.T) {
 	env := testutil.Setup(t)
 	billing := env.NewUpstream(t, "billing", "main")

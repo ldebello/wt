@@ -47,7 +47,7 @@ func TestHelpAndLabels(t *testing.T) {
 		t.Error("expected no help without groups or choices")
 	}
 	withChoices := []Option{{Value: "a"}, {Value: "b", ChoiceName: "branch", Choices: func() ([]Choice, error) { return nil, nil }}}
-	if got := help(withChoices, []string{"workspace", "repository"}, 1); got != "ctrl+t: all / [workspace] / repository   ctrl+b: choose branch" {
+	if got := help(withChoices, []string{"workspace", "repository"}, 1); got != "ctrl+t: all / [workspace] / repository   ctrl+b: choose branch   ctrl+r: toggle read-only" {
 		t.Errorf("help = %q", got)
 	}
 	if got := (Option{Label: "api"}).DisplayLabel(); got != "api" {
@@ -55,5 +55,40 @@ func TestHelpAndLabels(t *testing.T) {
 	}
 	if got := (Option{Label: "api", Choice: ":release"}).DisplayLabel(); got != "api:release" {
 		t.Errorf("DisplayLabel = %q", got)
+	}
+	if got := (Option{Label: "api", ReadOnly: true}).DisplayLabel(); got != "api  (read-only)" {
+		t.Errorf("DisplayLabel = %q", got)
+	}
+}
+
+func TestToggleReadOnly(t *testing.T) {
+	choices := func() ([]Choice, error) { return nil, nil }
+	options := []Option{
+		{Value: "nochoices"},
+		{Value: "api", Choices: choices},
+		{Value: "based", Choices: choices, Choice: ":release"},
+	}
+
+	// Only applies to options with Choices (like ChoiceKey).
+	toggleReadOnly(options, "nochoices")
+	if options[0].ReadOnly {
+		t.Error("toggled an option without Choices")
+	}
+
+	// Toggling on selects it.
+	toggleReadOnly(options, "api")
+	if !options[1].ReadOnly || !options[1].Selected {
+		t.Errorf("api = %+v", options[1])
+	}
+	toggleReadOnly(options, "api")
+	if options[1].ReadOnly {
+		t.Error("did not toggle off")
+	}
+
+	// Exclusive with a ":base" choice (a branch of your own to write on): it
+	// clears the choice.
+	toggleReadOnly(options, "based")
+	if !options[2].ReadOnly || options[2].Choice != "" {
+		t.Errorf("based = %+v", options[2])
 	}
 }

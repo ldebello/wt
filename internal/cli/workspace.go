@@ -43,7 +43,7 @@ func (a *App) statusLine(ms workspace.MemberStatus, keepUnmerged bool) string {
 	atRisk := false
 	switch {
 	case ms.Err != nil:
-	case ms.Untouched:
+	case ms.ReadOnly, ms.Untouched:
 		icon, color = "·", colorDim
 	case ms.Merged:
 		icon, color = "✔", colorOK
@@ -74,8 +74,9 @@ func newWorkspaceCmd(app *App) *cobra.Command {
 repository. Repositories already in the workspace are left untouched.
 
 Without --repos or --bundles, pick bundles and repositories interactively
-(ctrl+b on a repository chooses its branch). --repos and --bundles take
-comma-separated values and can be repeated. Each repository is one of:
+(ctrl+b on a repository chooses its branch, ctrl+r marks it read-only).
+--repos and --bundles take comma-separated values and can be repeated. Each
+repository is one of:
 
   repo          the workspace branch <name>: an existing local branch, else
                 origin/<name>, else a new branch from origin/<default>
@@ -83,6 +84,9 @@ comma-separated values and can be repeated. Each repository is one of:
                 not exist yet (your own branch, e.g. for a PR into <base>)
   repo@branch   work directly on an existing <branch> (e.g. to review it);
                 a branch can be checked out in only one workspace at a time
+  repo#ro       read-only: a detached checkout of origin/<default>, for
+                context only, with no branch of its own to manage or remove;
+                combine with @branch (repo@branch#ro) to pin it to one
 
 Before resolving branches, wt asks origin for the latest version of the
 branches involved (one quick request per repository, in parallel) and
@@ -93,6 +97,7 @@ origin/<branch> is fast-forwarded; one that has diverged is left as is.
   wt ws PROJ-123 --repos billing,worker                    # branch PROJ-123 in both
   wt ws HOTFIX-77 --repos billing:release-2.4,web:develop  # HOTFIX-77 from each base
   wt ws REVIEW-1 --repos billing@feature/foo               # work on feature/foo itself
+  wt ws PROJ-123 --repos billing,worker --repos shared-lib#ro  # shared-lib for context only
   wt ws PROJ-123 --bundles backend --repos tools`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -291,9 +296,12 @@ func pickWorkspaceContents(ctx context.Context, app *App, mgr workspace.Manager,
 	}
 	for _, n := range names {
 		o := ui.Option{Label: n, Value: repoPrefix + n, Group: "repositories"}
-		if m, in := current.Member(n); in {
+		switch m, in := current.Member(n); {
+		case in && m.ReadOnly:
+			o.Selected, o.Label = true, n+"  (in workspace, read-only at "+workspace.ReadOnlyRefLabel(m.ReadOnlyRef)+")"
+		case in:
 			o.Selected, o.Label = true, n+"  (in workspace on "+m.Branch+")"
-		} else {
+		default:
 			o.ChoiceName = "branch"
 			o.Choices = branchChoices(ctx, mgr.Index, n, wsName, wsName, wsName+"  (workspace branch: existing, or new from the default branch)")
 		}
@@ -313,7 +321,11 @@ func pickWorkspaceContents(ctx context.Context, app *App, mgr workspace.Manager,
 			bundles = append(bundles, name)
 		} else if name, ok := strings.CutPrefix(o.Value, repoPrefix); ok {
 			if _, in := current.Member(name); !in {
-				repos = append(repos, name+o.Choice) // "", "@branch" or ":base"
+				spec := name + o.Choice // "", "@branch" or ":base"
+				if o.ReadOnly {
+					spec += "#ro"
+				}
+				repos = append(repos, spec)
 			}
 		}
 	}
@@ -326,9 +338,11 @@ func newWorkspaceListCmd(app *App) *cobra.Command {
 		Aliases: []string{"list"},
 		Short:   "List workspaces with their repositories and branches",
 		Long: `List workspaces. Each repository is shown as repo@branch; '*' marks
-uncommitted changes. The workspace name is bold and followed by ':', since a
-member's branch is normally named after it too (e.g. repo@PROJ-123) and
-could otherwise run into the name with nothing to tell them apart.`,
+uncommitted changes, and a read-only repository (repo#ro) is marked instead
+of showing a branch, since it has none of its own. The workspace name is
+bold and followed by ':', since a member's branch is normally named after it
+too (e.g. repo@PROJ-123) and could otherwise run into the name with nothing
+to tell them apart.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mgr, err := app.Workspaces()
@@ -455,6 +469,12 @@ func memberLabel(m workspace.Member) string {
 	switch {
 	case m.Broken:
 		return m.Repo + " (broken)"
+	case m.ReadOnly:
+		label := m.Repo + "  (read-only"
+		if m.ReadOnlyRef != "" {
+			label += " at " + m.ReadOnlyRef
+		}
+		return label + ")"
 	case m.Branch == "":
 		return m.Repo + " (detached)"
 	default:
@@ -471,7 +491,8 @@ func newWorkspaceRemoveCmd(app *App) *cobra.Command {
 		Short:   "Remove a workspace, or some of its repositories",
 		Long: `Remove the worktrees of a workspace (or only --repos) and then the workspace
 directory. Nothing is forced: worktrees with uncommitted changes are kept,
-and a branch checked out in another worktree never is.
+and a branch checked out in another worktree never is. A read-only
+repository (repo#ro) has no branch to manage: it is always removed cleanly.
 
 Once a worktree is gone, its local branch goes too, merged or not: with no
 workspace left to use it from, an orphaned branch has no purpose. Set
@@ -539,7 +560,7 @@ func removeWorkspace(ctx context.Context, app *App, name string, repos []string,
 	}
 	app.printf("Workspace %s: %s\n", name, ws.Path)
 	for _, m := range targets {
-		app.printf("  %s@%s\n", m.Repo, m.Branch)
+		app.printf("  %s\n", memberLabel(m))
 	}
 	statuses := mgr.CheckBranches(ctx, targets)
 	hasRemote := false

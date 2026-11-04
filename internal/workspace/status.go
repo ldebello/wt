@@ -38,6 +38,8 @@ func (ms MemberStatus) Describe() string {
 		parts = append(parts, "uncommitted changes")
 	}
 	switch {
+	case ms.ReadOnly:
+		parts = append(parts, "read-only at "+ReadOnlyRefLabel(ms.ReadOnlyRef))
 	case ms.Untouched:
 		parts = append(parts, "no changes of its own")
 	case ms.Merged:
@@ -75,6 +77,9 @@ func (m Manager) memberStatus(ctx context.Context, member Member) MemberStatus {
 	ms.Bare = m.Index.BarePath(member.Repo)
 	if ms.Dirty, ms.Err = git.IsDirty(ctx, member.Path); ms.Err != nil {
 		return ms
+	}
+	if member.ReadOnly {
+		return ms // no branch or commits of its own to judge
 	}
 	def, err := m.Index.DefaultBranch(ctx, member.Repo)
 	if err != nil {
@@ -120,7 +125,7 @@ func (s Status) Summary() (label string, safe bool) {
 			return ms.Repo + ": " + ms.Err.Error(), false
 		case ms.Dirty:
 			return "uncommitted changes in " + ms.Repo, false
-		case ms.Untouched:
+		case ms.ReadOnly, ms.Untouched:
 			continue
 		}
 		allEmpty = false

@@ -11,7 +11,8 @@ import (
 )
 
 // fakeUI returns canned answers in order and records what was asked.
-// A multi-select answer "value=choice" selects value with that Choice.
+// A multi-select answer "value=choice" selects value with that Choice; a
+// trailing "+ro" ("value+ro" or "value=choice+ro") also marks it ReadOnly.
 type fakeUI struct {
 	multi    [][]string
 	selects  []string
@@ -30,6 +31,10 @@ func (f *fakeUI) MultiSelect(title string, options []ui.Option) ([]ui.Option, er
 	f.multi = f.multi[1:]
 	var picked []ui.Option
 	for _, a := range answer {
+		readOnly := false
+		if rest, ok := strings.CutSuffix(a, "+ro"); ok {
+			readOnly, a = true, rest
+		}
 		value, choice, _ := strings.Cut(a, "=")
 		for _, o := range options {
 			if o.Value == value {
@@ -37,6 +42,7 @@ func (f *fakeUI) MultiSelect(title string, options []ui.Option) ([]ui.Option, er
 				if choice != "" {
 					o.Choice = choice
 				}
+				o.ReadOnly = readOnly
 				picked = append(picked, o)
 			}
 		}

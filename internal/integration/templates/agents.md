@@ -5,7 +5,7 @@ each folder is a separate git worktree.
 
 Repositories:
 {{- range .Repos}}
-- `{{.Name}}/` on branch `{{if .Branch}}{{.Branch}}{{else}}(detached){{end}}`
+- `{{.Name}}/` on branch `{{if .ReadOnly}}read-only{{if .Ref}}, {{.Ref}}{{end}}{{else if .Branch}}{{.Branch}}{{else}}(detached){{end}}`
 {{- end}}
 
 Guidelines for coding agents:
@@ -13,6 +13,10 @@ Guidelines for coding agents:
 - Run git commands and edit files only inside the repository folder they
   belong to. Never run git at the workspace root.
 - Keep each repository on the branch listed above; do not switch branches.
+{{- if .HasReadOnly}}
+- Repositories marked **read-only** above are reference material, for
+  context only: never edit, commit, or switch branches inside them.
+{{- end}}
 - Changes may span repositories: check the other folders for callers and
   dependencies before changing shared interfaces, and update them together.
 {{- if .Codegraph}}

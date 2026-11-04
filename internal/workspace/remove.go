@@ -16,6 +16,7 @@ type RemoveResult struct {
 	Branch        string
 	Removed       bool   // worktree removed
 	Skipped       string // why the worktree was kept
+	ReadOnly      bool   // it had no branch of its own to begin with (repo#ro)
 	BranchDeleted bool
 	BranchForced  bool   // the branch was deleted though not merged or pushed (deleteUnmerged)
 	BranchKept    string // why the local branch was kept
@@ -27,6 +28,9 @@ type RemoveResult struct {
 func (r RemoveResult) Describe() string {
 	if !r.Removed {
 		return "kept: " + r.Skipped
+	}
+	if r.ReadOnly {
+		return "worktree removed (read-only)"
 	}
 	parts := []string{"worktree removed"}
 	switch {
@@ -71,7 +75,7 @@ func (m Manager) RemoveMembers(ctx context.Context, members []Member, deleteRemo
 }
 
 func (m Manager) removeMember(ctx context.Context, member Member, deleteRemote, deleteUnmerged bool) RemoveResult {
-	res := RemoveResult{Repo: member.Repo, Branch: member.Branch}
+	res := RemoveResult{Repo: member.Repo, Branch: member.Branch, ReadOnly: member.ReadOnly}
 	if member.Broken || !m.Index.Exists(member.Repo) {
 		res.Skipped = errMissingRepo.Error()
 		return res

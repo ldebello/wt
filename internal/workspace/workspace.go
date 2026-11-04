@@ -18,6 +18,21 @@ import (
 
 var errMissingRepo = errors.New("its repository is missing from the index (see 'wt check')")
 
+// readOnlyMarker is a file wt writes inside a worktree's private git admin
+// directory (<bare>/worktrees/<id>/, never the working directory itself, so
+// it is invisible to `git status` and never makes the worktree "dirty") to
+// record that it is a read-only (repo#ro) member. Its content is the branch
+// it was checked out from, or empty for the repository's default branch.
+const readOnlyMarker = "wt-readonly"
+
+// ReadOnlyRefLabel describes a read-only member's pinned ref for messages.
+func ReadOnlyRefLabel(ref string) string {
+	if ref == "" {
+		return "the default branch"
+	}
+	return "branch " + ref
+}
+
 // Workspace is a workspace directory and the repository worktrees in it.
 type Workspace struct {
 	Name    string
@@ -33,6 +48,12 @@ type Member struct {
 	Repo   string
 	Path   string
 	Branch string // empty when detached
+	// ReadOnly members (repo#ro) are always detached (Branch is empty too):
+	// context for an agent, with no branch of their own to manage or remove.
+	ReadOnly bool
+	// ReadOnlyRef is set when ReadOnly is true: the branch it is pinned to,
+	// or empty for the repository's default branch.
+	ReadOnlyRef string
 	// Broken is set when the worktree's repository no longer exists.
 	Broken bool
 }
@@ -152,6 +173,10 @@ func (m Manager) readMember(path string) (Member, bool) {
 		return Member{}, false
 	}
 	member := Member{Repo: name, Path: path}
+	if data, err := os.ReadFile(filepath.Join(gitDir, readOnlyMarker)); err == nil {
+		member.ReadOnly = true
+		member.ReadOnlyRef = string(data)
+	}
 	head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
 	if err != nil {
 		member.Broken = true

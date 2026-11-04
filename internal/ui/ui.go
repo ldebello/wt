@@ -26,6 +26,9 @@ const (
 	GroupKey = "ctrl+t"
 	// ChoiceKey opens the Choices dropdown of the highlighted option.
 	ChoiceKey = "ctrl+b"
+	// ReadonlyKey toggles ReadOnly on the highlighted option (only one with
+	// Choices set, like ChoiceKey).
+	ReadonlyKey = "ctrl+r"
 )
 
 // Option is a selectable item.
@@ -39,11 +42,16 @@ type Option struct {
 	// Choices, when set, lists alternatives for this option (e.g. its
 	// branches); ChoiceKey opens them in a dropdown. The first choice is the
 	// default. It is called lazily, only when the dropdown is opened.
+	// Also gates ReadonlyKey: it applies to the same options as ChoiceKey.
 	Choices    func() ([]Choice, error)
 	ChoiceName string // what a choice is, for help text (e.g. "branch")
 	// Choice is the picked choice value ("" = the default). It is appended to
 	// the label in lists.
 	Choice string
+	// ReadOnly is toggled by ReadonlyKey; shown next to the label. Picking a
+	// Choice that creates a new branch (a ":base" value) clears it, and
+	// toggling it on clears such a choice back to "": the two are exclusive.
+	ReadOnly bool
 }
 
 // Choice is one entry of an option's dropdown. A choice with Next opens a
@@ -98,8 +106,27 @@ func (Terminal) MultiSelect(title string, options []Option) ([]Option, error) {
 			if err := chooseFor(options, hovered); err != nil {
 				return nil, err
 			}
+		case ReadonlyKey:
+			toggleReadOnly(options, hovered)
 		default:
 			return SelectedOptions(options), nil
+		}
+	}
+}
+
+// toggleReadOnly flips ReadOnly for the option with value hovered (only one
+// with Choices set, like ChoiceKey); toggling it on also selects it and
+// clears a ":base" choice, which is for a branch of your own to write on.
+func toggleReadOnly(options []Option, hovered string) {
+	i := slices.IndexFunc(options, func(o Option) bool { return o.Value == hovered })
+	if i < 0 || options[i].Choices == nil {
+		return
+	}
+	options[i].ReadOnly = !options[i].ReadOnly
+	if options[i].ReadOnly {
+		options[i].Selected = true
+		if strings.HasPrefix(options[i].Choice, ":") {
+			options[i].Choice = ""
 		}
 	}
 }
@@ -147,6 +174,9 @@ func chooseFor(options []Option, hovered string) error {
 	}
 	options[i].Choice = picked
 	options[i].Selected = true
+	if strings.HasPrefix(picked, ":") {
+		options[i].ReadOnly = false // a base is for a branch of your own to write on
+	}
 	return nil
 }
 
@@ -227,9 +257,14 @@ func Values(options []Option) []string {
 	return out
 }
 
-// DisplayLabel is the label shown in lists, followed by the choice.
+// DisplayLabel is the label shown in lists, followed by the choice and
+// whether it is read-only.
 func (o Option) DisplayLabel() string {
-	return o.Label + o.Choice
+	label := o.Label + o.Choice
+	if o.ReadOnly {
+		label += "  (read-only)"
+	}
+	return label
 }
 
 // help describes the extra keys available for options.
@@ -249,7 +284,7 @@ func help(options []Option, groups []string, view int) string {
 		if name == "" {
 			name = "option"
 		}
-		parts = append(parts, ChoiceKey+": choose "+name)
+		parts = append(parts, ChoiceKey+": choose "+name, ReadonlyKey+": toggle read-only")
 	}
 	return strings.Join(parts, "   ")
 }
@@ -307,10 +342,10 @@ func (m *keyCatcher) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case GroupKey:
 			m.key = GroupKey
 			return m, tea.Quit
-		case ChoiceKey:
+		case ChoiceKey, ReadonlyKey:
 			if m.hovered != nil {
 				if v, ok := m.hovered(); ok {
-					m.key, m.hoveredValue = ChoiceKey, v
+					m.key, m.hoveredValue = k.String(), v
 					return m, tea.Quit
 				}
 			}

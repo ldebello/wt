@@ -21,6 +21,20 @@ type Repo struct {
 	Name   string
 	Branch string
 	Path   string
+	// ReadOnly repos (repo#ro) are context for the agent, with no branch of
+	// their own: Branch is empty even when Ref pins them to one.
+	ReadOnly bool
+	Ref      string // the branch ReadOnly is pinned to, or empty for the default branch
+}
+
+// HasReadOnly reports whether any repo is read-only, for templates.
+func (w Workspace) HasReadOnly() bool {
+	for _, r := range w.Repos {
+		if r.ReadOnly {
+			return true
+		}
+	}
+	return false
 }
 
 // Integration is an optional feature attached to workspace events.

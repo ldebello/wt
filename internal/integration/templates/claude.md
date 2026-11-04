@@ -7,7 +7,7 @@ different repository.
 | Folder | Branch |
 |--------|--------|
 {{- range .Repos}}
-| `{{.Name}}/` | `{{if .Branch}}{{.Branch}}{{else}}(detached){{end}}` |
+| `{{.Name}}/` | `{{if .ReadOnly}}read-only{{if .Ref}}, {{.Ref}}{{end}}{{else if .Branch}}{{.Branch}}{{else}}(detached){{end}}` |
 {{- end}}
 
 ## Rules
@@ -17,6 +17,10 @@ different repository.
   git commands at the workspace root.
 - Edit files only inside a repository folder. Commit, push and open pull
   requests per repository, on the branch listed above.
+{{- if .HasReadOnly}}
+- Folders marked **read-only** above are reference material, for context
+  only: never edit, commit, or switch branches inside them.
+{{- end}}
 - Do not switch branches inside these worktrees: a branch can be checked out
   in only one worktree, so `git switch`/`git checkout` can fail or affect
   other workspaces. Ask before changing branches.

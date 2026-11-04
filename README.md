@@ -123,10 +123,12 @@ selections are kept while switching. In the workspace and bundle pickers,
 The first entry is the default (the workspace branch). Then come the default
 branch and the rest, most recent first. After picking a branch, choose
 between creating the workspace branch from it and working directly on it.
+`ctrl+r` instead marks the repository read-only (context only, no branch of
+its own); picking a branch to create (`:base`) clears it, and vice versa.
 The result is shown next to the repository in the same syntax as `--repos`
-(`billing:release-2.4`, `billing@feature/x`). `--repos` and `--bundles` always
-take a value: comma-separated (no spaces, or quote the list), or repeat the
-flag (`--repos a --repos b:develop`).
+(`billing:release-2.4`, `billing@feature/x`, `billing#ro`). `--repos` and
+`--bundles` always take a value: comma-separated (no spaces, or quote the
+list), or repeat the flag (`--repos a --repos b:develop`).
 
 ### Workspaces and branches
 
@@ -135,13 +137,15 @@ flag (`--repos a --repos b:develop`).
 by `wt sync`. Repositories in the same workspace can have different default
 branches.
 
-Each repository in `--repos` takes one of three forms:
+Each repository in `--repos` takes one of these forms:
 
 | Form | Branch in the worktree | Typical use |
 |---|---|---|
 | `repo` | the workspace branch `<name>`, new from `origin/<default>` if it doesn't exist | a ticket off the default branch |
 | `repo:base` | the workspace branch `<name>`, new from `base` if it doesn't exist | a hotfix or PR into `base`, or stacking on another branch |
 | `repo@branch` | `branch` itself | reviewing or continuing an existing branch |
+| `repo#ro` | a detached checkout of `origin/<default>`, no branch of its own | context for an agent, without the risk of it being edited |
+| `repo@branch#ro` | a detached checkout of `branch`, no branch of its own | context pinned to a specific branch (e.g. a release) |
 
 ```bash
 wt ws PROJ-123                                           # pick bundles and repositories
@@ -149,8 +153,15 @@ wt ws PROJ-123 --repos billing,worker                    # PROJ-123 in both
 wt ws HOTFIX-77 --repos billing:release-2.4,web:develop  # HOTFIX-77 from a different base per repo
 wt ws HOTFIX-78 --repos billing:release-2.4              # another hotfix from the same base
 wt ws REVIEW-1  --repos billing@feature/foo              # work on feature/foo itself
+wt ws PROJ-123 --repos billing,worker --repos shared-lib#ro  # shared-lib for context only
 wt ws PROJ-123 --repos billing --no-fetch                # offline: use the refs from the last sync
 ```
+
+A read-only repository (`repo#ro`) is never checked out on a branch of its
+own: there is nothing for `wt ws rm` to merge-check or delete, and the same
+branch can be used read-only in more than one workspace at a time (unlike a
+regular `repo@branch`, which only one worktree can hold). It is marked
+read-only in `CLAUDE.md`/`AGENTS.md` too, so an agent knows not to edit it.
 
 With `repo` and `repo:base`, the workspace branch is found or created in
 this order:
@@ -365,10 +376,14 @@ If one fails, `wt` prints a warning and the workspace is still ready.
   root:
   - `claude` writes `CLAUDE.md`; `generic` writes `AGENTS.md` (read by
     other coding agents).
+  - A read-only repository (`repo#ro`) is listed as such, with a rule telling
+    the agent it is for context only: never edit, commit, or switch branches
+    inside it.
   - To customise the content, put a template in `~/.wt/templates/<name>.md`
     and select it with `template = "<name>"` (or `--template <name>`).
     Templates are Go `text/template` files that can use `.Name`, `.Path`,
-    `.Repos` (each with `.Name`, `.Branch` and `.Path`) and `.Codegraph`.
+    `.Repos` (each with `.Name`, `.Branch`, `.Path`, `.ReadOnly` and `.Ref`),
+    `.HasReadOnly` and `.Codegraph`.
 
 Generated files start with a marker line. Delete that line to keep your
 edits: `wt` then never overwrites or deletes the file. Removing a workspace

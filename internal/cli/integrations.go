@@ -144,7 +144,7 @@ func (a *App) integrations() ([]integration.Integration, error) {
 func toIntegrationWorkspace(ws workspace.Workspace) integration.Workspace {
 	out := integration.Workspace{Name: ws.Name, Path: ws.Path}
 	for _, m := range ws.Members {
-		out.Repos = append(out.Repos, integration.Repo{Name: m.Repo, Branch: m.Branch, Path: m.Path})
+		out.Repos = append(out.Repos, integration.Repo{Name: m.Repo, Branch: m.Branch, Path: m.Path, ReadOnly: m.ReadOnly, Ref: m.ReadOnlyRef})
 	}
 	return out
 }

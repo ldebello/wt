@@ -10,43 +10,60 @@ import (
 //	repo         the workspace branch (existing, or new from the default branch)
 //	repo@branch  work directly on an existing branch
 //	repo:base    the workspace branch, created from base if it does not exist
+//	repo#ro      read-only: a detached checkout of origin/<default>, no branch
+//	             of its own, never touched by 'wt ws rm'. Combine with
+//	             repo@branch#ro to pin it to a specific branch instead.
 //
-// At most one of Branch and Base is set.
+// At most one of Branch and Base is set; ReadOnly never combines with Base
+// (a base is for a branch of your own, which is for writing).
 type Spec struct {
-	Repo   string
-	Branch string // check out this branch instead of the workspace branch
-	Base   string // start point for a new workspace branch
+	Repo     string
+	Branch   string // check out this branch instead of the workspace branch
+	Base     string // start point for a new workspace branch
+	ReadOnly bool   // a detached checkout, context only: see repo#ro above
 }
 
 func (s Spec) String() string {
+	suffix := ""
+	if s.ReadOnly {
+		suffix = "#ro"
+	}
 	switch {
 	case s.Branch != "":
-		return s.Repo + "@" + s.Branch
+		return s.Repo + "@" + s.Branch + suffix
 	case s.Base != "":
 		return s.Repo + ":" + s.Base
 	}
-	return s.Repo
+	return s.Repo + suffix
 }
 
-const specSyntax = "expected repo, repo@branch (work on branch) or repo:base (new workspace branch from base)"
+const specSyntax = "expected repo, repo@branch (work on branch), repo:base (new workspace branch from base) or repo#ro (read-only, for context)"
 
-// ParseSpec parses "repo", "repo@branch" or "repo:base". Git branch names
-// cannot contain ':', so the separators are unambiguous.
+// ParseSpec parses "repo", "repo@branch", "repo:base", or any of the first
+// two with a trailing "#ro". Git branch names cannot contain ':' or '#', so
+// the separators are unambiguous.
 func ParseSpec(s string) (Spec, error) {
 	s = strings.TrimSpace(s)
+	readOnly := false
+	if rest, ok := strings.CutSuffix(s, "#ro"); ok {
+		readOnly, s = true, rest
+	}
 	i := strings.IndexAny(s, "@:")
 	if i < 0 {
 		if s == "" {
 			return Spec{}, fmt.Errorf("invalid repository %q: %s", s, specSyntax)
 		}
-		return Spec{Repo: s}, nil
+		return Spec{Repo: s, ReadOnly: readOnly}, nil
 	}
 	repo, sep, rest := s[:i], s[i], s[i+1:]
-	if repo == "" || rest == "" || strings.ContainsAny(rest, ":") {
+	if repo == "" || rest == "" || strings.ContainsAny(rest, ":#") {
 		return Spec{}, fmt.Errorf("invalid repository %q: %s", s, specSyntax)
 	}
 	if sep == '@' {
-		return Spec{Repo: repo, Branch: rest}, nil
+		return Spec{Repo: repo, Branch: rest, ReadOnly: readOnly}, nil
+	}
+	if readOnly {
+		return Spec{}, fmt.Errorf("invalid repository %q: a base is for a branch of your own to write on; it cannot be read-only (#ro)", repo+":"+rest+"#ro")
 	}
 	return Spec{Repo: repo, Base: rest}, nil
 }
@@ -93,7 +110,7 @@ func Combine(bundles []NamedSpecs, explicit []Spec) ([]Spec, []string) {
 		switch {
 		case !seen:
 			order = append(order, spec.Repo)
-		case prev.Branch == spec.Branch && prev.Base == spec.Base:
+		case prev.Branch == spec.Branch && prev.Base == spec.Base && prev.ReadOnly == spec.ReadOnly:
 			return
 		case override && (spec.Branch != "" || spec.Base != ""):
 			notes = append(notes, fmt.Sprintf("%s: using %s from %s over %s from %s", spec.Repo, branchLabel(spec), from, branchLabel(prev), source[spec.Repo]))
@@ -121,11 +138,15 @@ func Combine(bundles []NamedSpecs, explicit []Spec) ([]Spec, []string) {
 }
 
 func branchLabel(s Spec) string {
+	label := "the workspace branch"
 	switch {
 	case s.Branch != "":
-		return "branch " + s.Branch
+		label = "branch " + s.Branch
 	case s.Base != "":
-		return "a new workspace branch from " + s.Base
+		label = "a new workspace branch from " + s.Base
 	}
-	return "the workspace branch"
+	if s.ReadOnly {
+		label += " (read-only)"
+	}
+	return label
 }

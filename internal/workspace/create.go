@@ -23,6 +23,9 @@ const (
 	TrackRemote
 	// CreateBranch creates a new branch from Start (not tracking it).
 	CreateBranch
+	// CheckoutReadOnly checks out Start detached, with no branch of its own
+	// (repo#ro): see readOnlyMarker.
+	CheckoutReadOnly
 )
 
 // Step is the planned change for one repository.
@@ -31,9 +34,13 @@ type Step struct {
 	Branch string
 	Path   string
 	Action Action
-	Start  string // start point for CreateBranch
+	Start  string // start point for CreateBranch and CheckoutReadOnly
 	Base   string // the repo:base the new branch is created from, recorded for cleanup
 	Note   string // extra information (e.g. a requested branch was ignored)
+	// ReadOnly is set for a repo#ro step (Action is Reuse or
+	// CheckoutReadOnly); Branch is then the branch it is pinned to (empty
+	// for the repository's default branch), never a branch of its own.
+	ReadOnly bool
 	// For CheckoutLocal with an origin/<branch>: commits only on the local
 	// branch (Ahead) and only on origin (Behind). A branch that is only
 	// behind is fast-forwarded before checkout.
@@ -49,10 +56,14 @@ func (s Step) FastForward() bool {
 // Describe returns a short human-readable description of the step.
 func (s Step) Describe() string {
 	var text string
-	switch s.Action {
-	case Reuse:
+	switch {
+	case s.ReadOnly && s.Action == Reuse:
+		text = "already read-only at " + ReadOnlyRefLabel(s.Branch) + ", left untouched"
+	case s.ReadOnly:
+		text = "read-only at " + ReadOnlyRefLabel(s.Branch)
+	case s.Action == Reuse:
 		text = fmt.Sprintf("already present on %s, left untouched", branchOrDetached(s.Branch))
-	case CheckoutLocal:
+	case s.Action == CheckoutLocal:
 		text = "existing branch " + s.Branch
 		switch {
 		case s.FastForward():
@@ -60,9 +71,9 @@ func (s Step) Describe() string {
 		case s.Behind > 0:
 			text += fmt.Sprintf(" (diverged from origin/%s: %d local and %d remote commits, not updated; run git pull)", s.Branch, s.Ahead, s.Behind)
 		}
-	case TrackRemote:
+	case s.Action == TrackRemote:
 		text = fmt.Sprintf("branch %s tracking origin/%s", s.Branch, s.Branch)
-	case CreateBranch:
+	case s.Action == CreateBranch:
 		text = fmt.Sprintf("new branch %s from %s", s.Branch, s.Start)
 	}
 	if s.Note != "" {
@@ -114,11 +125,17 @@ func (m Manager) planOne(ctx context.Context, ws Workspace, spec Spec) (Step, er
 	if err := m.Index.Require(spec.Repo); err != nil {
 		return Step{}, err
 	}
+	if spec.ReadOnly {
+		return m.planReadOnly(ctx, ws, spec)
+	}
 	step := Step{Repo: spec.Repo, Branch: spec.Branch, Path: filepath.Join(ws.Path, spec.Repo)}
 	if step.Branch == "" {
 		step.Branch = ws.Name
 	}
 	if member, ok := ws.Member(spec.Repo); ok {
+		if member.ReadOnly {
+			return Step{}, fmt.Errorf("already in the workspace as a read-only repository; remove it first to add it as a regular, writable one")
+		}
 		step.Action = Reuse
 		switch {
 		case spec.Base != "":
@@ -170,6 +187,38 @@ func (m Manager) planOne(ctx context.Context, ws Workspace, spec Spec) (Step, er
 		}
 	}
 	return step, nil
+}
+
+// planReadOnly resolves a repo#ro spec: a detached checkout of origin/<ref>
+// (the repository's default branch, or spec.Branch when given), with no
+// branch of its own to manage.
+func (m Manager) planReadOnly(ctx context.Context, ws Workspace, spec Spec) (Step, error) {
+	path := filepath.Join(ws.Path, spec.Repo)
+	if member, ok := ws.Member(spec.Repo); ok {
+		if !member.ReadOnly {
+			return Step{}, fmt.Errorf("already in the workspace as a regular, writable repository; remove it first to add it read-only")
+		}
+		step := Step{Repo: spec.Repo, Branch: member.ReadOnlyRef, Path: path, Action: Reuse, ReadOnly: true}
+		if member.ReadOnlyRef != spec.Branch {
+			step.Note = "requested " + ReadOnlyRefLabel(spec.Branch) + "; already read-only at " + ReadOnlyRefLabel(member.ReadOnlyRef)
+		}
+		return step, nil
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return Step{}, fmt.Errorf("%s exists and is not a worktree of %s", path, spec.Repo)
+	}
+	bare := m.Index.BarePath(spec.Repo)
+	ref := spec.Branch
+	if ref == "" {
+		def, err := git.DefaultBranch(ctx, bare)
+		if err != nil {
+			return Step{}, err
+		}
+		ref = def
+	} else if !git.RemoteBranchExists(ctx, bare, ref) {
+		return Step{}, fmt.Errorf("branch %q not found on origin", ref)
+	}
+	return Step{Repo: spec.Repo, Branch: spec.Branch, Path: path, Action: CheckoutReadOnly, ReadOnly: true, Start: "origin/" + ref}, nil
 }
 
 // ignoredBase notes that a base does not apply to an existing branch.
@@ -274,6 +323,8 @@ func (m Manager) addWorktree(ctx context.Context, s Step) error {
 		// --no-track: don't make the start point the upstream of the new
 		// branch; push.autoSetupRemote sets origin/<branch> on first push.
 		args = append(args, "--no-track", "-b", s.Branch, s.Path, s.Start)
+	case CheckoutReadOnly:
+		args = append(args, "--detach", s.Path, s.Start)
 	}
 	if _, err := git.Run(ctx, bare, args...); err != nil {
 		return fmt.Errorf("%s: %w", s.Repo, err)
@@ -284,7 +335,26 @@ func (m Manager) addWorktree(ctx context.Context, s Step) error {
 			return fmt.Errorf("%s: %w", s.Repo, err)
 		}
 	}
+	if s.Action == CheckoutReadOnly {
+		if err := markReadOnly(ctx, s.Path, s.Branch); err != nil {
+			return fmt.Errorf("%s: %w", s.Repo, err)
+		}
+	}
 	return nil
+}
+
+// markReadOnly records, in the worktree's private git admin directory (never
+// its working directory: see readOnlyMarker), that it is a read-only member
+// pinned to branch (empty for the repository's default branch).
+func markReadOnly(ctx context.Context, path, branch string) error {
+	gitDir, err := git.Run(ctx, path, "rev-parse", "--git-dir")
+	if err != nil {
+		return err
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(path, gitDir)
+	}
+	return os.WriteFile(filepath.Join(gitDir, readOnlyMarker), []byte(branch), 0o644)
 }
 
 // baseRef is what a workspace branch is compared with to decide whether it
