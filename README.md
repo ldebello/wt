@@ -388,7 +388,7 @@ If one fails, `wt` prints a warning and the workspace is still ready.
 - **folder-customization** marks the read-only repositories (`repo#ro`) in
   VS Code's explorer: it writes `folder-customization.folders` in the
   workspace's `.vscode/settings.json`, giving each one a colour and a
-  `Read Only` badge. It needs the VS Code extension
+  `RO` badge. It needs the VS Code extension
   [Folder Customization](https://marketplace.visualstudio.com/items?itemName=j3lte.folder-customization)
   (`code --install-extension j3lte.folder-customization`); `wt` reminds you
   when you enable it, and `wt check` repeats it.
@@ -397,7 +397,7 @@ If one fails, `wt` prints a warning and the workspace is still ready.
   wt integrations folder-customization
   ```
 
-  Only wt's own entries (badge `Read Only`) are replaced; other settings and
+  Only wt's own entries (badge `RO`) are replaced; other settings and
   entries you added are kept, and a repository you customised by hand is not
   overwritten. If `settings.json` has comments, `wt` warns and leaves it
   alone (it cannot rewrite them). Removing the workspace removes wt's

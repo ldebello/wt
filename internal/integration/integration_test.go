@@ -172,7 +172,7 @@ func TestFolderCustomization(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readFile(t, file)
-	for _, want := range []string{`"folder-customization.folders"`, `"path": "web"`, `"color": "foldercustomization.AnsiColor4"`, `"badge": "Read Only"`, `"tooltip": "Read Only Repo"`} {
+	for _, want := range []string{`"folder-customization.folders"`, `"path": "/web"`, `"color": "foldercustomization.AnsiColor3"`, `"badge": "RO"`, `"tooltip": "Read Only Repo"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("settings missing %q:\n%s", want, got)
 		}
@@ -197,7 +197,7 @@ func TestFolderCustomization(t *testing.T) {
 		}
 	}
 	got = readFile(t, file)
-	if strings.Contains(got, `"gone"`) || !strings.Contains(got, `"Mine"`) || strings.Count(got, `"path": "web"`) != 1 {
+	if strings.Contains(got, `"gone"`) || !strings.Contains(got, `"Mine"`) || strings.Count(got, `"path": "/web"`) != 1 {
 		t.Errorf("entries not merged:\n%s", got)
 	}
 	if strings.Index(got, "editor.tabSize") > strings.Index(got, "folder-customization") || strings.Index(got, "folder-customization") > strings.Index(got, "files.exclude") {

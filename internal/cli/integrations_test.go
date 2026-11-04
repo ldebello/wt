@@ -103,7 +103,7 @@ func TestFolderCustomizationIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(settings), `"path": "web"`) || strings.Contains(string(settings), `"api"`) {
+	if !strings.Contains(string(settings), `"path": "/web"`) || strings.Contains(string(settings), `"api"`) {
 		t.Errorf("settings.json:\n%s", settings)
 	}
 

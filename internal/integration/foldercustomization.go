@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -18,8 +19,8 @@ const (
 	ExtensionID  = "j3lte.folder-customization"
 	ExtensionURL = "https://marketplace.visualstudio.com/items?itemName=" + ExtensionID
 
-	roColor   = "foldercustomization.AnsiColor4"
-	roBadge   = "Read Only"
+	roColor   = "foldercustomization.AnsiColor3"
+	roBadge   = "RO" // badges only fit two characters
 	roTooltip = "Read Only Repo"
 )
 
@@ -55,7 +56,11 @@ type folderEntry struct {
 }
 
 // ours reports whether wt wrote this entry, so it can be replaced.
-func (e folderEntry) ours() bool { return e.Badge == roBadge && e.Tooltip == roTooltip }
+// The longer "Read Only" badge of earlier versions counts too, so it gets
+// replaced.
+func (e folderEntry) ours() bool {
+	return (e.Badge == roBadge || e.Badge == "Read Only") && e.Tooltip == roTooltip
+}
 
 // OnWorkspaceCreated rewrites the entries for the read-only repositories and
 // leaves every other setting and entry as it was.
@@ -69,7 +74,8 @@ func (f *FolderCustomization) OnWorkspaceCreated(ctx context.Context, ws Workspa
 		if err != nil || rel == "" {
 			rel = r.Name
 		}
-		want = append(want, folderEntry{Path: filepath.ToSlash(rel), Color: roColor, Badge: roBadge, Tooltip: roTooltip})
+		want = append(want, folderEntry{Path: "/" + filepath.ToSlash(rel), // the extension needs the leading slash
+			Color: roColor, Badge: roBadge, Tooltip: roTooltip})
 	}
 	return syncFolderSettings(ws.Path, want)
 }
@@ -106,10 +112,10 @@ func syncFolderSettings(wsPath string, want []folderEntry) error {
 			continue
 		}
 		entries = append(entries, raw)
-		taken[e.Path] = true
+		taken[strings.TrimPrefix(e.Path, "/")] = true
 	}
 	for _, e := range want {
-		if taken[e.Path] {
+		if taken[strings.TrimPrefix(e.Path, "/")] {
 			continue // customised by hand
 		}
 		raw, _ := json.Marshal(e)

@@ -51,7 +51,7 @@ Generated files start with a marker line; delete it to keep your edits.`,
 		Use:   "folder-customization",
 		Short: "Enable (or --disable) VS Code folder badges for read-only repositories",
 		Long: `Write folder-customization.folders in <workspace>/.vscode/settings.json so
-read-only repositories (repo#ro) get a colour and a "Read Only" badge in
+read-only repositories (repo#ro) get a colour and a "RO" badge in
 VS Code's explorer. Other settings and entries in that file are kept.
 
 Needs the Folder Customization extension:
